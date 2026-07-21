@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>מנהל אתר – חשמל</title>
+<meta name="theme-color" content="#16181c">
+<meta name="description" content="ניהול משימות, הזמנות ובניינים לקבלן חשמל באתר בנייה">
+
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="אתר חשמל">
+
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="update-banner">
+  <span>🔄 גרסה חדשה זמינה</span>
+  <button id="update-btn">עדכן עכשיו</button>
+</div>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="bolt"></div>
+    <div>
+      <h1>ניהול אתר</h1>
+      <div class="subtitle" id="header-subtitle">קבלן חשמל</div>
+    </div>
+  </div>
+  <button class="icon-btn" id="search-btn" title="חיפוש" aria-label="חיפוש">🔍</button>
+</header>
+<div class="hazard-strip"></div>
+
+<main>
+
+  <!-- ===================== TASKS ===================== -->
+  <section class="view active" id="view-tasks">
+    <div class="view-header">
+      <h2>משימות</h2>
+      <span class="count" id="tasks-count"></span>
+    </div>
+    <div class="chip-row" id="tasks-status-filter">
+      <div class="chip active" data-status="all">הכל</div>
+      <div class="chip" data-status="open">פתוח</div>
+      <div class="chip" data-status="in_progress">בביצוע</div>
+      <div class="chip" data-status="done">בוצע</div>
+    </div>
+    <div class="chip-row" id="tasks-type-filter"></div>
+    <div id="tasks-list"></div>
+  </section>
+
+  <!-- ===================== ORDERS ===================== -->
+  <section class="view" id="view-orders">
+    <div class="view-header">
+      <h2>הזמנות</h2>
+      <span class="count" id="orders-count"></span>
+    </div>
+    <div class="chip-row" id="orders-status-filter">
+      <div class="chip active" data-status="all">הכל</div>
+      <div class="chip" data-status="pending">לא הוזמן</div>
+      <div class="chip" data-status="ordered">הוזמן</div>
+      <div class="chip" data-status="arrived">הגיע</div>
+      <div class="chip" data-status="installed">הותקן</div>
+    </div>
+    <div id="orders-list"></div>
+  </section>
+
+  <!-- ===================== BUILDINGS ===================== -->
+  <section class="view" id="view-buildings">
+    <div class="view-header">
+      <h2>בניינים</h2>
+      <span class="count" id="buildings-count"></span>
+    </div>
+    <div id="buildings-list"></div>
+    <button class="btn-secondary" id="add-building-btn">+ הוספת בניין</button>
+  </section>
+
+  <!-- ===================== QUESTIONS ===================== -->
+  <section class="view" id="view-questions">
+    <div class="view-header">
+      <h2>שאלות ובעיות</h2>
+      <span class="count" id="questions-count"></span>
+    </div>
+    <div class="chip-row" id="questions-status-filter">
+      <div class="chip active" data-status="all">הכל</div>
+      <div class="chip" data-status="open">פתוח</div>
+      <div class="chip" data-status="answered">נענה</div>
+    </div>
+    <div id="questions-list"></div>
+  </section>
+
+  <!-- ===================== MORE ===================== -->
+  <section class="view" id="view-more">
+    <div class="view-header"><h2>עוד</h2></div>
+
+    <div class="section-title">הערות כלליות</div>
+    <div id="general-notes-list"></div>
+    <div class="inline-add">
+      <input type="text" id="general-note-input" placeholder="הערה חדשה...">
+      <button id="general-note-add">הוסף</button>
+    </div>
+
+    <div class="section-title">ניהול קטגוריות</div>
+    <div class="settings-group">
+      <div class="link-row" id="manage-task-types">
+        <span>סוגי משימות</span><span>›</span>
+      </div>
+      <div class="link-row" id="manage-order-categories">
+        <span>קטגוריות הזמנה</span><span>›</span>
+      </div>
+    </div>
+
+    <div class="section-title">נתונים וגיבוי</div>
+    <div class="settings-group">
+      <div class="link-row" id="export-data">
+        <span>ייצוא גיבוי (קובץ)</span><span>⬆️</span>
+      </div>
+      <div class="link-row" id="import-data">
+        <span>ייבוא / שחזור גיבוי</span><span>⬇️</span>
+      </div>
+      <div class="link-row" id="wipe-data">
+        <span style="color:var(--red)">מחיקת כל הנתונים</span><span>🗑</span>
+      </div>
+    </div>
+    <input type="file" id="import-file-input" accept="application/json" style="display:none">
+
+    <div class="section-title">גרסה</div>
+    <div class="settings-group">
+      <div class="link-row">
+        <span>גרסה נוכחית</span><span id="app-version-label" class="mono"></span>
+      </div>
+      <div class="link-row" id="check-update-btn">
+        <span>בדיקת עדכון</span><span>🔄</span>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<button class="fab" id="fab-add" aria-label="הוספה">+</button>
+
+<nav class="bottomnav">
+  <button data-view="tasks" class="active"><span class="ic">✅</span>משימות</button>
+  <button data-view="orders"><span class="ic">📦</span>הזמנות</button>
+  <button data-view="buildings"><span class="ic">🏢</span>בניינים</button>
+  <button data-view="questions"><span class="ic">❓</span>שאלות</button>
+  <button data-view="more"><span class="ic">⋯</span>עוד</button>
+</nav>
+
+<div class="sheet-backdrop" id="sheet-backdrop"></div>
+<div class="sheet" id="sheet">
+  <div class="sheet-handle"></div>
+  <div id="sheet-content"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="storage.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
