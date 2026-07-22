@@ -1,0 +1,10 @@
+{
+  "name": "electrician-site-app-reminders",
+  "private": true,
+  "version": "1.0.0",
+  "description": "GitHub Action helper — checks Firestore for due reminders and sends free Web Push notifications. Not needed to run the app itself, only for the cloud reminders feature.",
+  "dependencies": {
+    "firebase-admin": "^12.6.0",
+    "web-push": "^3.6.7"
+  }
+}

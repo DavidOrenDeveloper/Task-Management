@@ -23,6 +23,8 @@
   <button id="update-btn">עדכן עכשיו</button>
 </div>
 
+<div id="urgent-banner" class="urgent-banner"></div>
+
 <header class="topbar">
   <div class="brand">
     <div class="bolt"></div>
@@ -41,13 +43,17 @@
   <section class="view active" id="view-tasks">
     <div class="view-header">
       <h2>משימות</h2>
-      <span class="count" id="tasks-count"></span>
+      <div class="header-right">
+        <span class="count" id="tasks-count"></span>
+        <button class="sort-btn" id="tasks-sort-btn" data-list="tasks">⇅ מיון</button>
+      </div>
     </div>
     <div class="chip-row" id="tasks-status-filter">
       <div class="chip active" data-status="all">הכל</div>
       <div class="chip" data-status="open">פתוח</div>
       <div class="chip" data-status="in_progress">בביצוע</div>
       <div class="chip" data-status="done">בוצע</div>
+      <div class="chip" data-status="hold">בהמתנה</div>
     </div>
     <div class="chip-row" id="tasks-type-filter"></div>
     <div id="tasks-list"></div>
@@ -57,7 +63,10 @@
   <section class="view" id="view-orders">
     <div class="view-header">
       <h2>הזמנות</h2>
-      <span class="count" id="orders-count"></span>
+      <div class="header-right">
+        <span class="count" id="orders-count"></span>
+        <button class="sort-btn" id="orders-sort-btn" data-list="orders">⇅ מיון</button>
+      </div>
     </div>
     <div class="chip-row" id="orders-status-filter">
       <div class="chip active" data-status="all">הכל</div>
@@ -73,8 +82,12 @@
   <section class="view" id="view-buildings">
     <div class="view-header">
       <h2>בניינים</h2>
-      <span class="count" id="buildings-count"></span>
+      <div class="header-right">
+        <span class="count" id="buildings-count"></span>
+        <button class="sort-btn" id="buildings-sort-btn" data-list="buildings">⇅ מיון</button>
+      </div>
     </div>
+    <p class="hint-text">לחיצה על שם קומה פותחת את דף המיקום עם הערות ומשימות. לחיצה ארוכה מזיזה סדר.</p>
     <div id="buildings-list"></div>
     <button class="btn-secondary" id="add-building-btn">+ הוספת בניין</button>
   </section>
@@ -83,7 +96,10 @@
   <section class="view" id="view-questions">
     <div class="view-header">
       <h2>שאלות ובעיות</h2>
-      <span class="count" id="questions-count"></span>
+      <div class="header-right">
+        <span class="count" id="questions-count"></span>
+        <button class="sort-btn" id="questions-sort-btn" data-list="questions">⇅ מיון</button>
+      </div>
     </div>
     <div class="chip-row" id="questions-status-filter">
       <div class="chip active" data-status="all">הכל</div>
@@ -103,6 +119,17 @@
       <input type="text" id="general-note-input" placeholder="הערה חדשה...">
       <button id="general-note-add">הוסף</button>
     </div>
+
+    <div class="section-title">תזכורות והתראות</div>
+    <div class="settings-group">
+      <div class="link-row" id="notif-permission-row">
+        <span>התראות בטלפון</span><span id="notif-permission-status">›</span>
+      </div>
+      <div class="link-row" id="cloud-status-row">
+        <span>תזכורות בענן (גם כשהאפליקציה סגורה)</span><span id="cloud-status-label">›</span>
+      </div>
+    </div>
+    <p class="hint-text">כדי שתזכורות יתריעו גם כשהאפליקציה סגורה לגמרי, יש להגדיר חיבור לענן חינמי (Firebase + GitHub Actions) — ראה קובץ SETUP-CLOUD.md שצורף לאפליקציה. בלי ההגדרה הזו, תזכורות יעבדו רק כשהאפליקציה פתוחה/ברקע.</p>
 
     <div class="section-title">ניהול קטגוריות</div>
     <div class="settings-group">
@@ -157,9 +184,16 @@
   <div id="sheet-content"></div>
 </div>
 
+<div class="dialog-backdrop" id="dialog-backdrop"></div>
+<div class="dialog-box" id="dialog-box"></div>
+
+<div class="sort-menu-backdrop" id="sort-menu-backdrop"></div>
+<div class="sort-menu" id="sort-menu"></div>
+
 <div class="toast" id="toast"></div>
 
 <script src="storage.js"></script>
+<script type="module" src="firebase-sync.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

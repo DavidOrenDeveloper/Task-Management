@@ -1,0 +1,19 @@
+// firestore.rules
+//
+// יש להדביק את הכללים האלה בקונסולת Firebase:
+// Firestore Database → Rules → (החלף את התוכן) → Publish
+//
+// ההיגיון: כל בקשה חייבת להיות "מחוברת אנונימית" (זה קורה אוטומטית באפליקציה,
+// בלי שום מסך התחברות שהמשתמש רואה). זה לא אבטחה מושלמת, אבל מונע מרובוטים
+// ומבקרים אקראיים באינטרנט לגשת לנתונים — סביר לגמרי לאפליקציה אישית עם
+// נתונים שאינם רגישים (כותרות משימות וזמנים, לא סיסמאות או מידע פיננסי).
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /sites/{siteId}/{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
