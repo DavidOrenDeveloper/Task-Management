@@ -78,23 +78,21 @@ self.addEventListener("notificationclick", (event) => {
   );
 });
 
-// Cache-first לקבצי המעטפת (עובד גם ללא אינטרנט באתר הבנייה),
-// עם נפילה לרשת אם משהו חסר בקאש.
+// Network-first: תמיד מנסה קודם מהרשת (כדי שעדכונים בקבצים כמו firebase-config.js
+// ייכנסו לתוקף מיד ולא יישארו "תקועים" בקאש הישן), ורק אם אין רשת נופל חזרה לקאש —
+// כך האפליקציה עדיין עובדת אופליין באתר הבנייה.
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      const networkFetch = fetch(event.request)
-        .then((response) => {
-          if (response && response.status === 200) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-          }
-          return response;
-        })
-        .catch(() => cached);
-      return cached || networkFetch;
-    })
+    fetch(event.request)
+      .then((response) => {
+        if (response && response.status === 200) {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        }
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });

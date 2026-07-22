@@ -1450,13 +1450,26 @@ $("#notif-permission-row").addEventListener("click", async () => {
 
 function updateCloudStatusLabel() {
   const el = $("#cloud-status-label");
-  if (!el) return;
-  if (!window.CloudSync || !window.CloudSync.enabled) { el.textContent = "לא מוגדר — ראה SETUP-CLOUD.md"; return; }
-  el.textContent = window.CloudSync.ready ? "✅ מחובר" : "מתחבר...";
+  if (!el || !window.CloudSync) { if (el) el.textContent = "לא מוגדר — ראה SETUP-CLOUD.md"; return; }
+  const map = {
+    idle: "לא מוגדר — ראה SETUP-CLOUD.md",
+    unconfigured: "לא מוגדר — ראה SETUP-CLOUD.md",
+    connecting: "מתחבר...",
+    connected: "✅ מחובר",
+    error: "⚠️ שגיאה — לחץ לפרטים",
+  };
+  el.textContent = map[window.CloudSync.status] || "›";
 }
-window.addEventListener("cloud-ready", () => { updateCloudStatusLabel(); if (Notification && Notification.permission === "granted") subscribeToPush(); });
-window.addEventListener("cloud-unconfigured", updateCloudStatusLabel);
+window.addEventListener("cloud-status", updateCloudStatusLabel);
+window.addEventListener("cloud-ready", () => {
+  updateCloudStatusLabel();
+  if ("Notification" in window && Notification.permission === "granted") subscribeToPush();
+});
 $("#cloud-status-row").addEventListener("click", async () => {
+  if (window.CloudSync && window.CloudSync.status === "error") {
+    await alertDialog("שגיאת חיבור לענן", `הפרטים המדויקים: ${window.CloudSync.errorMessage || "לא ידוע"}\n\nהסיבות הנפוצות ביותר: "התחברות אנונימית" לא הופעלה ב-Firebase Authentication, או שחוקי ה-Firestore לא פורסמו (Publish). ראה SETUP-CLOUD.md.`);
+    return;
+  }
   if (window.CloudSync && window.CloudSync.enabled) {
     await subscribeToPush();
   } else {

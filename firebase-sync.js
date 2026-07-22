@@ -17,30 +17,48 @@ const CloudSync = {
   enabled: false,
   ready: false,
   db: null,
+  status: "idle", // "idle" | "unconfigured" | "connecting" | "error" | "connected"
+  errorMessage: "",
   _queue: [],
 
   init() {
-    if (!FIREBASE_CONFIG || !FIREBASE_CONFIG.apiKey || FIREBASE_CONFIG.apiKey === "YOUR_API_KEY") {
+    const apiKey = (FIREBASE_CONFIG && FIREBASE_CONFIG.apiKey || "").trim();
+    if (!apiKey || apiKey === "YOUR_API_KEY") {
+      this.status = "unconfigured";
       console.warn("[cloud] Firebase לא מוגדר עדיין — תזכורות ימשיכו לפעול רק כשהאפליקציה פתוחה. ראה SETUP-CLOUD.md");
-      window.dispatchEvent(new CustomEvent("cloud-unconfigured"));
+      window.dispatchEvent(new CustomEvent("cloud-status"));
       return;
     }
+    this.status = "connecting";
+    window.dispatchEvent(new CustomEvent("cloud-status"));
     try {
       const app = initializeApp(FIREBASE_CONFIG);
       this.db = getFirestore(app);
       this.enabled = true;
       const auth = getAuth(app);
-      signInAnonymously(auth).catch((e) => console.error("[cloud] auth failed", e));
+      signInAnonymously(auth).catch((e) => {
+        // סיבות נפוצות: "התחברות אנונימית" לא הופעלה בקונסולת Firebase (Authentication →
+        // Sign-in method → Anonymous → Enable), או שהערכים ב-firebase-config.js לא מדויקים.
+        this.status = "error";
+        this.errorMessage = (e && e.code) || (e && e.message) || String(e);
+        console.error("[cloud] auth failed:", this.errorMessage, e);
+        window.dispatchEvent(new CustomEvent("cloud-status"));
+      });
       onAuthStateChanged(auth, (user) => {
         if (user) {
           this.ready = true;
+          this.status = "connected";
           this._queue.forEach((fn) => fn());
           this._queue = [];
+          window.dispatchEvent(new CustomEvent("cloud-status"));
           window.dispatchEvent(new CustomEvent("cloud-ready"));
         }
       });
     } catch (e) {
-      console.error("[cloud] init failed", e);
+      this.status = "error";
+      this.errorMessage = (e && e.message) || String(e);
+      console.error("[cloud] init failed:", this.errorMessage, e);
+      window.dispatchEvent(new CustomEvent("cloud-status"));
     }
   },
 
@@ -75,7 +93,7 @@ const CloudSync = {
           updatedAt: Date.now(),
         });
       } catch (e) {
-        console.error("[cloud] upsertReminder failed", e);
+        this._reportWriteError(e, "upsertReminder");
       }
     });
   },
@@ -83,7 +101,7 @@ const CloudSync = {
   removeReminder(taskId) {
     if (!this.enabled) return;
     this._whenReady(() => {
-      deleteDoc(this._reminderDoc(taskId)).catch((e) => console.error("[cloud] removeReminder failed", e));
+      deleteDoc(this._reminderDoc(taskId)).catch((e) => this._reportWriteError(e, "removeReminder"));
     });
   },
 
@@ -96,11 +114,23 @@ const CloudSync = {
           const hash = await sha256Hex(json.endpoint);
           await setDoc(this._subDoc(hash), { subscription: json, createdAt: Date.now() });
         } catch (e) {
-          console.error("[cloud] saveSubscription failed", e);
+          this._reportWriteError(e, "saveSubscription");
         }
         resolve();
       });
     });
+  },
+
+  _reportWriteError(e, where) {
+    // סיבה נפוצה: חוקי Firestore (Rules) לא הודבקו/לא פורסמו, ולכן הכתיבה נחסמת
+    // (permission-denied) — יש לוודא בקונסולת Firebase → Firestore → Rules → Publish.
+    const msg = (e && e.code) || (e && e.message) || String(e);
+    console.error(`[cloud] ${where} failed:`, msg, e);
+    if (msg && String(msg).includes("permission-denied")) {
+      this.status = "error";
+      this.errorMessage = "permission-denied — יש לבדוק שחוקי ה-Firestore הודבקו ופורסמו (Publish)";
+      window.dispatchEvent(new CustomEvent("cloud-status"));
+    }
   },
 };
 
