@@ -20,8 +20,6 @@ export const FIREBASE_CONFIG = {
 // אפשר להשאיר את זה כמו שהוא, או לשנות למחרוזת ייחודית משלך (רק תוודא/י
 // שאותה מחרוזת מוגדרת גם ב-GitHub Secrets תחת השם SITE_ID).
 
-VAPID_PUBLIC_KEY=BBXF7PvlWgU44COZ_or03Zo4smtU0ho8M1qIoQanQeZ0YOjKtXvW719cCTnoHdZSziNo8JwM5s06PC0s7NE_F5o;
-
 export const SITE_ID = "electrician-site-app-default";
 
 // המפתח הציבורי של ה-VAPID (ראה SETUP-CLOUD.md — נוצר פעם אחת יחד עם המפתח הפרטי).
