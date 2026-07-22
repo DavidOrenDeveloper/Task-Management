@@ -1,0 +1,33 @@
+name: Send due reminders
+
+on:
+  schedule:
+    # רץ כל 10 דקות. GitHub לא מבטיח דיוק מוחלט בזמן (יכול להיות איחור
+    # של כמה דקות בעומס), אבל בפועל זה מספיק טוב לתזכורות אישיות.
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {} # מאפשר גם הרצה ידנית מטאב ה-Actions בגיטהאב, לצורך בדיקה
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Check & send due reminders
+        run: node send-reminders.js
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          SITE_ID: ${{ secrets.SITE_ID }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
