@@ -129,7 +129,7 @@ header.topbar .subtitle {
 /* ---------- Main content ---------- */
 main {
   flex: 1;
-  padding: 14px 14px 24px;
+  padding: 14px 14px calc(110px + env(safe-area-inset-bottom));
   max-width: 640px;
   width: 100%;
   margin: 0 auto;

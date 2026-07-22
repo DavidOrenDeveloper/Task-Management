@@ -1,5 +1,5 @@
 // app.js — ניווט, רינדור, וטיפול באירועים
-const APP_VERSION = "2.0.0";
+const APP_VERSION = "2.0.2";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
