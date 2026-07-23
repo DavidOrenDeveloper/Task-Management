@@ -1,5 +1,5 @@
 // app.js — ניווט, רינדור, וטיפול באירועים
-const APP_VERSION = "2.0.4";
+const APP_VERSION = "2.0.5";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -152,21 +152,38 @@ function enableLongPressReorder(container, itemSelector, onReorder) {
   let startX = 0, startY = 0;
   let moved = false;
   let dragEndedAt = 0;
+  let activePointerId = null;
+  let scrollLockPrev = null;
 
   function getItems() { return $$(itemSelector, container); }
 
   function cancelPress() { clearTimeout(pressTimer); pressTimer = null; }
 
+  function lockPageScroll() {
+    if (scrollLockPrev !== null) return;
+    scrollLockPrev = { html: document.documentElement.style.overflow, body: document.body.style.overflow };
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+  }
+  function unlockPageScroll() {
+    if (scrollLockPrev === null) return;
+    document.documentElement.style.overflow = scrollLockPrev.html;
+    document.body.style.overflow = scrollLockPrev.body;
+    scrollLockPrev = null;
+  }
+
   function startDrag(el) {
     dragEl = el;
     dragEl.classList.add("dragging");
     container.classList.add("reorder-active");
+    lockPageScroll();
     if (navigator.vibrate) { try { navigator.vibrate(15); } catch (e) {} }
   }
 
   function finishDrag() {
     dragEl.classList.remove("dragging");
     container.classList.remove("reorder-active");
+    unlockPageScroll();
     const ids = getItems().map((el) => el.dataset.id || el.dataset.reorderId);
     dragEl = null;
     dragEndedAt = Date.now();
@@ -185,11 +202,14 @@ function enableLongPressReorder(container, itemSelector, onReorder) {
     if (!e.target.closest(".drag-handle")) return;
     moved = false;
     startX = e.clientX; startY = e.clientY;
+    activePointerId = e.pointerId;
+    try { e.target.setPointerCapture(e.pointerId); } catch (err) {}
     cancelPress();
     pressTimer = setTimeout(() => { if (!moved) startDrag(item); }, 420);
   });
 
   container.addEventListener("pointermove", (e) => {
+    if (activePointerId !== null && e.pointerId !== activePointerId) return;
     if (!dragEl) {
       if (Math.abs(e.clientX - startX) > 9 || Math.abs(e.clientY - startY) > 9) { moved = true; cancelPress(); }
       return;
@@ -206,7 +226,7 @@ function enableLongPressReorder(container, itemSelector, onReorder) {
     else container.appendChild(dragEl);
   }, { passive: false });
 
-  function onUp() { cancelPress(); if (dragEl) finishDrag(); moved = false; }
+  function onUp() { cancelPress(); if (dragEl) finishDrag(); moved = false; activePointerId = null; }
   container.addEventListener("pointerup", onUp);
   container.addEventListener("pointercancel", onUp);
 }
