@@ -1,5 +1,5 @@
 // app.js — ניווט, רינדור, וטיפול באירועים
-const APP_VERSION = "2.0.6";
+const APP_VERSION = "2.0.7";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -1051,7 +1051,7 @@ function renderBuildings() {
           <span>📝 הערות ומשימות כלליות לבניין</span><span>›</span>
         </div>
         <div class="floor-rows-wrap" data-building="${b.id}">
-        ${b.floors.map((f) => `
+        ${[...b.floors].sort((a, c) => a.order - c.order).map((f) => `
           <div class="floor-row" data-id="${f.id}" data-reorder-item>
             <span class="drag-handle">⠿</span>
             <span class="floor-name-tap" data-action="open-floor">${esc(f.name)} ${f.budgetCode ? `<span class="mono" style="color:var(--text-dim);font-size:11px">(${esc(f.budgetCode)})</span>` : ""}</span>
@@ -1748,16 +1748,24 @@ function renderAll() {
 $("#app-version-label").textContent = APP_VERSION;
 updateNotifPermissionLabel();
 
+let waitingWorker = null;
+let refreshingAfterUpdate = false;
+
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register(`sw.js?v=${APP_VERSION}`).then((reg) => {
       // check for update every time the app is opened
       reg.update();
+      if (reg.waiting && navigator.serviceWorker.controller) {
+        waitingWorker = reg.waiting;
+        $("#update-banner").classList.add("show");
+      }
 
       reg.addEventListener("updatefound", () => {
         const newWorker = reg.installing;
         newWorker.addEventListener("statechange", () => {
           if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
+            waitingWorker = newWorker;
             $("#update-banner").classList.add("show");
           }
         });
@@ -1774,18 +1782,22 @@ if ("serviceWorker" in navigator) {
       });
     }).catch((err) => console.error("SW registration failed", err));
 
-    let refreshing = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      if (refreshing) return;
-      refreshing = true;
+      if (refreshingAfterUpdate) return;
+      refreshingAfterUpdate = true;
       window.location.reload();
     });
   });
 }
 $("#update-btn").addEventListener("click", () => {
-  navigator.serviceWorker.getRegistration().then((reg) => {
-    if (reg && reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
-  });
+  if (waitingWorker) {
+    waitingWorker.postMessage({ type: "SKIP_WAITING" });
+    toast("מעדכן...");
+    // controllerchange normally reloads us; this is just a safety net in case it doesn't fire
+    setTimeout(() => { if (!refreshingAfterUpdate) { refreshingAfterUpdate = true; window.location.reload(); } }, 1500);
+  } else {
+    window.location.reload();
+  }
 });
 
 // ---------------- init ----------------
