@@ -1,9 +1,37 @@
 // app.js — ניווט, רינדור, וטיפול באירועים
-const APP_VERSION = "2.0.5";
+const APP_VERSION = "2.0.6";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const esc = (s) => (s || "").toString().replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+// ==========================================================
+// Back-button integration (Android hardware/gesture back)
+// Without this, pressing the phone's back button/triangle while a sheet or an
+// expanded building is open exits the whole app instead of just closing that one thing.
+// We push a history entry whenever something like that opens, and closing it (whether
+// by tapping outside, an X button, or the hardware back button) pops that entry.
+// ==========================================================
+const backStack = [];
+let suppressPopstate = false;
+function pushBackable(closeFn) {
+  history.pushState({ appLayer: backStack.length + 1 }, "");
+  backStack.push(closeFn);
+}
+function popBackableIfMatches(closeFn) {
+  const idx = backStack.lastIndexOf(closeFn);
+  if (idx === -1) return;
+  backStack.splice(idx, 1);
+  if (!suppressPopstate) history.back();
+}
+window.addEventListener("popstate", () => {
+  if (backStack.length) {
+    suppressPopstate = true;
+    const fn = backStack.pop();
+    fn();
+    suppressPopstate = false;
+  }
+});
 
 const state = {
   view: "tasks",
@@ -34,8 +62,10 @@ let dialogResolve = null;
 function closeDialog(result) {
   $("#dialog-backdrop").classList.remove("show");
   $("#dialog-box").classList.remove("show");
+  popBackableIfMatches(closeDialogBack);
   if (dialogResolve) { const r = dialogResolve; dialogResolve = null; r(result); }
 }
+function closeDialogBack() { closeDialog(null); }
 $("#dialog-backdrop").addEventListener("click", () => closeDialog(null));
 
 function showDialog({ title, message = "", inputsHTML = "", buttons }) {
@@ -60,6 +90,7 @@ function showDialog({ title, message = "", inputsHTML = "", buttons }) {
     });
     $("#dialog-backdrop").classList.add("show");
     box.classList.add("show");
+    pushBackable(closeDialogBack);
     const firstInput = $("input,textarea", box);
     if (firstInput) setTimeout(() => firstInput.focus(), 50);
   });
@@ -101,13 +132,16 @@ async function chooseDialog(title, message, options) {
 
 // ---------------- Sheet (bottom modal) ----------------
 function openSheet(html) {
+  const alreadyOpen = $("#sheet").classList.contains("show");
   $("#sheet-content").innerHTML = html;
   $("#sheet").classList.add("show");
   $("#sheet-backdrop").classList.add("show");
+  if (!alreadyOpen) pushBackable(closeSheet);
 }
 function closeSheet() {
   $("#sheet").classList.remove("show");
   $("#sheet-backdrop").classList.remove("show");
+  popBackableIfMatches(closeSheet);
 }
 $("#sheet-backdrop").addEventListener("click", closeSheet);
 
@@ -1050,7 +1084,16 @@ async function buildingsClickHandler(e) {
   const bid = block.dataset.id;
   const action = e.target.dataset.action || (e.target.closest("[data-action]") && e.target.closest("[data-action]").dataset.action);
   if (action === "toggle" || (!action && e.target.closest(".building-head"))) {
-    block.classList.toggle("open");
+    const isOpen = block.classList.contains("open");
+    if (isOpen) {
+      block.classList.remove("open");
+      if (block._backClose) { popBackableIfMatches(block._backClose); block._backClose = null; }
+    } else {
+      block.classList.add("open");
+      const closeFn = () => { block.classList.remove("open"); block._backClose = null; };
+      block._backClose = closeFn;
+      pushBackable(closeFn);
+    }
     return;
   }
   if (action === "toggle-budget") { e.target.nextElementSibling.classList.toggle("show"); return; }
@@ -1707,7 +1750,7 @@ updateNotifPermissionLabel();
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").then((reg) => {
+    navigator.serviceWorker.register(`sw.js?v=${APP_VERSION}`).then((reg) => {
       // check for update every time the app is opened
       reg.update();
 
