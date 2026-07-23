@@ -1,5 +1,5 @@
 // app.js — ניווט, רינדור, וטיפול באירועים
-const APP_VERSION = "2.0.2";
+const APP_VERSION = "2.0.4";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -119,7 +119,6 @@ function openSortMenu(anchorEl, currentValue, options, onSelect) {
   menu.innerHTML = options.map((o) => `<div class="opt ${o.value === currentValue ? "active" : ""}" data-val="${o.value}">${esc(o.label)} ${o.value === currentValue ? "✓" : ""}</div>`).join("");
   const rect = anchorEl.getBoundingClientRect();
   menu.style.top = `${rect.bottom + 6}px`;
-  const isRTLNearRight = rect.right;
   menu.style.left = "auto";
   menu.style.right = `${Math.max(10, window.innerWidth - rect.right)}px`;
   $$(".opt", menu).forEach((opt) => opt.addEventListener("click", () => {
@@ -128,6 +127,15 @@ function openSortMenu(anchorEl, currentValue, options, onSelect) {
   }));
   menu.classList.add("show");
   $("#sort-menu-backdrop").classList.add("show");
+  // The menu's width depends on its (translated) content, and the sort button can sit
+  // anywhere on screen — so only after layout do we know if it overflows the left edge.
+  requestAnimationFrame(() => {
+    const menuRect = menu.getBoundingClientRect();
+    if (menuRect.left < 10) {
+      menu.style.right = "auto";
+      menu.style.left = "10px";
+    }
+  });
 }
 function closeSortMenu() {
   $("#sort-menu").classList.remove("show");
@@ -174,7 +182,7 @@ function enableLongPressReorder(container, itemSelector, onReorder) {
   container.addEventListener("pointerdown", (e) => {
     const item = e.target.closest(itemSelector);
     if (!item || !container.contains(item)) return;
-    if (e.target.closest("button, input, textarea, select, a, .status-dot")) return;
+    if (!e.target.closest(".drag-handle")) return;
     moved = false;
     startX = e.clientX; startY = e.clientY;
     cancelPress();
@@ -956,6 +964,17 @@ const BUILDINGS_SORT_OPTIONS = [
   { value: "default", label: "סדר ידני (גרירה)" },
   { value: "alpha", label: "לפי א-ב" },
 ];
+function openBuildingBlock(buildingId) {
+  closeSheet();
+  switchView("buildings");
+  requestAnimationFrame(() => {
+    const block = $(`.building-block[data-id="${buildingId}"]`);
+    if (block) {
+      block.classList.add("open");
+      block.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  });
+}
 function renderBuildings() {
   const list = $("#buildings-list");
   let buildings = [...Store.data.buildings];
@@ -1083,6 +1102,12 @@ $("#buildings-sort-btn").addEventListener("click", (e) => {
   openSortMenu(e.currentTarget, state.buildingsSort, BUILDINGS_SORT_OPTIONS, (val) => {
     state.buildingsSort = val; Store.setUiPref("buildingsSort", val); renderBuildings();
   });
+});
+$("#buildings-expand-all-btn").addEventListener("click", () => {
+  const blocks = $$(".building-block", $("#buildings-list"));
+  const anyClosed = blocks.some((b) => !b.classList.contains("open"));
+  blocks.forEach((b) => b.classList.toggle("open", anyClosed));
+  $("#buildings-expand-all-btn").textContent = anyClosed ? "⇕ סגור הכל" : "⇕ פתח הכל";
 });
 enableLongPressReorder($("#buildings-list"), "[data-reorder-item]", (ids) => {
   Store.reorderBuildings(ids);
@@ -1523,7 +1548,7 @@ function runSearch(query) {
 
   const buildingMatches = [];
   Store.data.buildings.forEach((b) => {
-    if (matchAll([b.name])) buildingMatches.push({ title: b.name, sub: `${b.floors.length} קומות`, action: () => { switchView("buildings"); toast("עבר לתצוגת בניינים"); } });
+    if (matchAll([b.name])) buildingMatches.push({ title: b.name, sub: `${b.floors.length} קומות`, action: () => openBuildingBlock(b.id) });
     b.floors.forEach((f) => {
       if (matchAll([b.name, f.name])) buildingMatches.push({ title: `${b.name} · ${f.name}`, sub: "קומה", action: () => openLocationDetail(b.id, f.id) });
     });
@@ -1676,7 +1701,13 @@ if ("serviceWorker" in navigator) {
       });
 
       $("#check-update-btn").addEventListener("click", () => {
-        reg.update().then(() => toast("נבדק — האפליקציה מעודכנת"));
+        reg.update().then(() => {
+          if (reg.installing || reg.waiting) {
+            toast("נמצא עדכון חדש — מתקין ברקע, האפליקציה תרענן את עצמה עוד רגע");
+          } else {
+            toast("נבדק — זו כבר הגרסה האחרונה");
+          }
+        });
       });
     }).catch((err) => console.error("SW registration failed", err));
 

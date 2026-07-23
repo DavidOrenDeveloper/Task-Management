@@ -2,7 +2,7 @@
 // חשוב: בכל פעם שמעדכנים את האפליקציה, יש להעלות את מספר CACHE_VERSION למטה.
 // זה מה שגורם לטלפונים להוריד את הגרסה החדשה בפתיחה הבאה.
 
-const CACHE_VERSION = "v2.0.2";
+const CACHE_VERSION = "v2.0.4";
 const CACHE_NAME = `elec-site-app-${CACHE_VERSION}`;
 
 const APP_SHELL = [
