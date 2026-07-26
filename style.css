@@ -582,12 +582,48 @@ input:focus, textarea:focus, select:focus {
   box-shadow: var(--shadow-sm);
 }
 
+.note-preview {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13.5px;
+  color: var(--text);
+  background: var(--surface-2);
+}
+.note-preview ul, .note-preview ol { margin: 4px 0; }
+.note-toolbar {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+.note-toolbar button {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+.note-toolbar button:active { background: var(--amber-tint); }
 .inline-add {
   display: flex;
   gap: 8px;
   margin-top: 10px;
+  align-items: flex-end;
 }
 .inline-add input { flex: 1; }
+.autogrow-textarea {
+  flex: 1;
+  resize: none;
+  overflow: hidden;
+  min-height: 40px;
+  max-height: 200px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .inline-add button {
   background: var(--amber);
   color: #2b1c00;

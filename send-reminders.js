@@ -19,11 +19,14 @@ function requireEnv(name) {
   }
   return v;
 }
+function sanitizeVapidKey(k) {
+  return (k || "").trim().replace(/^['"]|['";]+$/g, "").trim().replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
 
 const serviceAccountRaw = requireEnv("FIREBASE_SERVICE_ACCOUNT");
 const SITE_ID = requireEnv("SITE_ID");
-const VAPID_PUBLIC_KEY = requireEnv("VAPID_PUBLIC_KEY");
-const VAPID_PRIVATE_KEY = requireEnv("VAPID_PRIVATE_KEY");
+const VAPID_PUBLIC_KEY = sanitizeVapidKey(requireEnv("VAPID_PUBLIC_KEY"));
+const VAPID_PRIVATE_KEY = sanitizeVapidKey(requireEnv("VAPID_PRIVATE_KEY"));
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:example@example.com";
 
 let serviceAccount;

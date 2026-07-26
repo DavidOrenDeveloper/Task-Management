@@ -116,10 +116,17 @@
 
     <div class="section-title">הערות כלליות</div>
     <div id="general-notes-list"></div>
+    <div class="note-toolbar" data-target="general-note-input">
+      <button type="button" data-fmt="bold"><b>B</b></button>
+      <button type="button" data-fmt="italic"><i>I</i></button>
+      <button type="button" data-fmt="bullet">☰ נקודות</button>
+      <button type="button" data-fmt="number">1. מספור</button>
+    </div>
     <div class="inline-add">
-      <input type="text" id="general-note-input" placeholder="הערה חדשה...">
+      <textarea id="general-note-input" class="autogrow-textarea" rows="1" placeholder="הערה חדשה..."></textarea>
       <button id="general-note-add">הוסף</button>
     </div>
+    <div id="general-note-input-preview" class="note-preview"><span style="color:var(--text-dim)">התצוגה של ההערה תופיע כאן</span></div>
 
     <div class="section-title">תזכורות והתראות</div>
     <div class="settings-group">

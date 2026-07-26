@@ -1,9 +1,118 @@
 // app.js — ניווט, רינדור, וטיפול באירועים
-const APP_VERSION = "2.0.7";
+const APP_VERSION = "2.0.9";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const esc = (s) => (s || "").toString().replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function autoGrow(el) { el.style.height = "auto"; el.style.height = `${el.scrollHeight}px`; }
+function updateNotePreview(ta) {
+  const preview = document.getElementById(`${ta.id}-preview`);
+  if (preview) preview.innerHTML = ta.value.trim() ? formatNoteText(ta.value) : `<span style="color:var(--text-dim)">התצוגה של ההערה תופיע כאן</span>`;
+}
+document.addEventListener("input", (e) => {
+  if (e.target.classList && e.target.classList.contains("autogrow-textarea")) { autoGrow(e.target); updateNotePreview(e.target); }
+});
+
+// ---------------- Simple note formatting toolbar (bold / italic / lists) ----------------
+// Textareas can't show real bold/italic while typing, so we use lightweight markdown-style
+// markers (**bold**, *italic*, "- " bullets, "1. " numbers), a live preview under the box
+// renders them properly (see formatNoteText below), and that's also how saved notes display.
+function currentLineInfo(val, pos) {
+  const lineStart = val.lastIndexOf("\n", pos - 1) + 1;
+  return { lineStart, line: val.slice(lineStart, pos) };
+}
+function nextListNumber(val, lineStart) {
+  if (lineStart === 0) return 1;
+  const { lineStart: prevStart, line: prevLineFull } = currentLineInfo(val, lineStart - 1);
+  const prevLine = val.slice(prevStart, lineStart - 1);
+  const m = prevLine.match(/^(\d+)\.\s/);
+  return m ? parseInt(m[1], 10) + 1 : 1;
+}
+function applyNoteFormat(ta, fmt) {
+  const start = ta.selectionStart, end = ta.selectionEnd;
+  const val = ta.value;
+  const selected = val.slice(start, end);
+  if (fmt === "bold" || fmt === "italic") {
+    const marker = fmt === "bold" ? "**" : "*";
+    const placeholder = fmt === "bold" ? "טקסט מודגש" : "טקסט נטוי";
+    const inner = selected || placeholder;
+    ta.value = val.slice(0, start) + marker + inner + marker + val.slice(end);
+    const from = start + marker.length;
+    ta.focus();
+    ta.setSelectionRange(from, from + inner.length);
+  } else if (fmt === "bullet" || fmt === "number") {
+    const { lineStart } = currentLineInfo(val, start);
+    const prefix = fmt === "bullet" ? "- " : `${nextListNumber(val, lineStart)}. `;
+    ta.value = val.slice(0, lineStart) + prefix + val.slice(lineStart);
+    const pos = start + prefix.length;
+    ta.focus();
+    ta.setSelectionRange(pos, pos);
+  }
+  autoGrow(ta);
+  updateNotePreview(ta);
+}
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-fmt]");
+  if (!btn) return;
+  const toolbar = btn.closest(".note-toolbar");
+  const ta = toolbar && document.getElementById(toolbar.dataset.target);
+  if (ta) applyNoteFormat(ta, btn.dataset.fmt);
+});
+// Pressing Enter inside a bullet/numbered line continues the list (with the number going
+// up by one); pressing Enter on an empty list item ends the list instead.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || !e.target.classList || !e.target.classList.contains("autogrow-textarea")) return;
+  const ta = e.target;
+  const val = ta.value;
+  const start = ta.selectionStart;
+  const { lineStart, line } = currentLineInfo(val, start);
+  const numMatch = line.match(/^(\d+)\.\s(.*)$/);
+  const bulletMatch = line.match(/^- (.*)$/);
+  if ((numMatch && !numMatch[2].trim()) || (bulletMatch && !bulletMatch[1].trim())) {
+    e.preventDefault();
+    ta.value = val.slice(0, lineStart) + val.slice(start);
+    ta.setSelectionRange(lineStart, lineStart);
+  } else if (numMatch) {
+    e.preventDefault();
+    const insert = `\n${parseInt(numMatch[1], 10) + 1}. `;
+    ta.value = val.slice(0, start) + insert + val.slice(start);
+    const pos = start + insert.length;
+    ta.setSelectionRange(pos, pos);
+  } else if (bulletMatch) {
+    e.preventDefault();
+    const insert = `\n- `;
+    ta.value = val.slice(0, start) + insert + val.slice(start);
+    const pos = start + insert.length;
+    ta.setSelectionRange(pos, pos);
+  } else {
+    return;
+  }
+  autoGrow(ta);
+  updateNotePreview(ta);
+});
+function formatNoteInline(t) {
+  return t.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/\*(.+?)\*/g, "<i>$1</i>");
+}
+function formatNoteText(raw) {
+  const lines = esc(raw).split("\n");
+  let html = "", i = 0;
+  while (i < lines.length) {
+    if (/^- /.test(lines[i])) {
+      const items = [];
+      while (i < lines.length && /^- /.test(lines[i])) { items.push(lines[i].slice(2)); i++; }
+      html += `<ul style="margin:4px 0;padding-inline-start:20px">${items.map((t) => `<li>${formatNoteInline(t)}</li>`).join("")}</ul>`;
+    } else if (/^\d+\.\s/.test(lines[i])) {
+      const items = [];
+      while (i < lines.length && /^\d+\.\s/.test(lines[i])) { items.push(lines[i].replace(/^\d+\.\s/, "")); i++; }
+      html += `<ol style="margin:4px 0;padding-inline-start:20px">${items.map((t) => `<li>${formatNoteInline(t)}</li>`).join("")}</ol>`;
+    } else {
+      html += lines[i] ? `<div>${formatNoteInline(lines[i])}</div>` : "<div>&nbsp;</div>";
+      i++;
+    }
+  }
+  return html;
+}
 
 // ==========================================================
 // Back-button integration (Android hardware/gesture back)
@@ -617,7 +726,7 @@ function taskFormHTML(task) {
     <h3>${isEdit ? "עריכת משימה" : "משימה חדשה"}</h3>
     <div class="field">
       <label>תיאור המשימה</label>
-      <input type="text" id="f-title" value="${esc(task.title)}" placeholder="לדוגמה: להתקין לוח חשמל בקומה 3" autofocus>
+      <textarea id="f-title" class="autogrow-textarea" rows="1" placeholder="לדוגמה: להתקין לוח חשמל בקומה 3" autofocus>${esc(task.title)}</textarea>
     </div>
     <div class="field">
       <label>סוג</label>
@@ -641,6 +750,7 @@ function taskFormHTML(task) {
 function openTaskForm(taskId, presetLocation) {
   const task = taskId ? Store.data.tasks.find((t) => t.id === taskId) : null;
   openSheet(taskFormHTML(task));
+  autoGrow($("#f-title"));
   wireFloorSelect(task ? task.buildingId : (presetLocation && presetLocation.buildingId), task ? task.floorId : (presetLocation && presetLocation.floorId));
   if (presetLocation && !task) {
     $("#f-building").value = presetLocation.buildingId || "";
@@ -1082,8 +1192,8 @@ async function buildingsClickHandler(e) {
   const block = e.target.closest(".building-block");
   if (!block) return;
   const bid = block.dataset.id;
-  const action = e.target.dataset.action || (e.target.closest("[data-action]") && e.target.closest("[data-action]").dataset.action);
-  if (action === "toggle" || (!action && e.target.closest(".building-head"))) {
+  const action = e.target.closest(".drag-handle") ? null : (e.target.dataset.action || (e.target.closest("[data-action]") && e.target.closest("[data-action]").dataset.action));
+  if (action === "toggle" || (!action && !e.target.closest(".drag-handle") && e.target.closest(".building-head"))) {
     const isOpen = block.classList.contains("open");
     if (isOpen) {
       block.classList.remove("open");
@@ -1194,17 +1304,24 @@ function locationDetailHTML(buildingId, floorId) {
       <div class="loc-tab ${locTab === "orders" ? "active" : ""}" data-tab="orders">הזמנות (${orders.length})</div>
     </div>
     <div class="loc-panel ${locTab === "notes" ? "active" : ""}" data-panel="notes">
+      <div class="note-toolbar" data-target="loc-note-input">
+        <button type="button" data-fmt="bold"><b>B</b></button>
+        <button type="button" data-fmt="italic"><i>I</i></button>
+        <button type="button" data-fmt="bullet">☰ נקודות</button>
+        <button type="button" data-fmt="number">1. מספור</button>
+      </div>
       <div class="inline-add">
-        <input type="text" id="loc-note-input" placeholder="הערה חדשה למיקום זה...">
+        <textarea id="loc-note-input" class="autogrow-textarea" rows="1" placeholder="הערה חדשה למיקום זה..."></textarea>
         <button id="loc-note-add">הוסף</button>
       </div>
+      <div id="loc-note-input-preview" class="note-preview"><span style="color:var(--text-dim)">התצוגה של ההערה תופיע כאן</span></div>
       <p class="hint-text">לחיצה ארוכה על הערה מזיזה את הסדר.</p>
       <div id="loc-notes-list">
         ${notes.length ? notes.map((n) => `
           <div class="loc-mini-card" data-id="${n.id}" data-reorder-item>
             <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
               <span class="drag-handle">⠿</span>
-              <span style="flex:1">${esc(n.text)}</span>
+              <span style="flex:1">${formatNoteText(n.text)}</span>
               <button class="note-del" data-del-note="${n.id}">✕</button>
             </div>
             <div class="sub">${timeAgo(n.createdAt)}</div>
@@ -1247,7 +1364,8 @@ function renderLocationDetail(buildingId, floorId) {
     renderLocationDetail(buildingId, floorId);
     toast("הערה נוספה");
   });
-  $("#loc-note-input").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#loc-note-add").click(); });
+  // (Enter just adds a new line here — no keyboard shortcut to submit, since Shift+Enter
+  // isn't practical on a phone keyboard. Use the "הוסף" button to save the note.)
   $$("[data-del-note]").forEach((btn) => btn.addEventListener("click", async (e) => {
     e.stopPropagation();
     const ok = await confirmDialog("מחיקת הערה", "למחוק את ההערה?", "מחיקה");
@@ -1379,7 +1497,7 @@ function renderGeneralNotes() {
     <div class="card" data-id="${n.id}" data-reorder-item style="padding:12px">
       <div class="note-line" style="font-size:14px;color:var(--text)">
         <span class="drag-handle">⠿</span>
-        <span style="flex:1">${esc(n.text)}</span>
+        <span style="flex:1">${formatNoteText(n.text)}</span>
         <button class="note-del" data-action="delete-note">✕</button>
       </div>
       <div style="font-size:11px;color:var(--text-dim);margin-top:4px">${timeAgo(n.createdAt)}</div>
@@ -1392,20 +1510,20 @@ function renderGeneralNotes() {
       if (ok) { Store.deleteGeneralNote(id); renderGeneralNotes(); }
     }
   };
-  enableLongPressReorder(list, "[data-reorder-item]", (ids) => { Store.reorderGeneralNotes(ids); renderGeneralNotes(); });
 }
+enableLongPressReorder($("#general-notes-list"), "[data-reorder-item]", (ids) => { Store.reorderGeneralNotes(ids); renderGeneralNotes(); });
 $("#general-note-add").addEventListener("click", () => {
   const input = $("#general-note-input");
   const text = input.value.trim();
   if (!text) return;
   Store.addGeneralNote(text);
   input.value = "";
+  input.style.height = "auto";
+  updateNotePreview(input);
   renderGeneralNotes();
   toast("הערה נוספה");
 });
-$("#general-note-input").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") $("#general-note-add").click();
-});
+// (Enter just adds a new line in the note box — use the "הוסף" button to save.)
 
 function categoryManagerHTML(title, items) {
   return `
