@@ -611,7 +611,7 @@ input:focus, textarea:focus, select:focus {
   display: flex;
   gap: 8px;
   margin-top: 10px;
-  align-items: flex-end;
+  align-items: flex-start;
 }
 .inline-add input { flex: 1; }
 .autogrow-textarea {

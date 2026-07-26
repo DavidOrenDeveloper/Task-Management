@@ -11,7 +11,11 @@ function updateNotePreview(ta) {
   if (preview) preview.innerHTML = ta.value.trim() ? formatNoteText(ta.value) : `<span style="color:var(--text-dim)">התצוגה של ההערה תופיע כאן</span>`;
 }
 document.addEventListener("input", (e) => {
-  if (e.target.classList && e.target.classList.contains("autogrow-textarea")) { autoGrow(e.target); updateNotePreview(e.target); }
+  if (e.target.classList && e.target.classList.contains("autogrow-textarea")) {
+    autoGrow(e.target);
+    updateNotePreview(e.target);
+    e.target.scrollIntoView({ block: "nearest" });
+  }
 });
 
 // ---------------- Simple note formatting toolbar (bold / italic / lists) ----------------
@@ -152,6 +156,7 @@ const state = {
   ordersSort: Store.data.uiPrefs.ordersSort,
   questionsSort: Store.data.uiPrefs.questionsSort,
   buildingsSort: Store.data.uiPrefs.buildingsSort,
+  generalNotesSort: Store.data.uiPrefs.generalNotesSort || "manual",
 };
 
 // ---------------- Toast ----------------
@@ -650,7 +655,7 @@ function renderTasks() {
       <div class="card-top">
         <span class="drag-handle">⠿</span>
         <div class="status-dot ${t.status}" data-action="cycle-status"></div>
-        <div class="card-title ${t.status === "done" ? "strike" : ""}">${esc(t.title)}</div>
+        <div class="card-title ${t.status === "done" ? "strike" : ""}">${formatNoteText(t.title)}</div>
       </div>
       <div class="card-meta">
         <span class="tag type">${esc(t.type)}</span>
@@ -726,7 +731,14 @@ function taskFormHTML(task) {
     <h3>${isEdit ? "עריכת משימה" : "משימה חדשה"}</h3>
     <div class="field">
       <label>תיאור המשימה</label>
+      <div class="note-toolbar" data-target="f-title">
+        <button type="button" data-fmt="bold"><b>B</b></button>
+        <button type="button" data-fmt="italic"><i>I</i></button>
+        <button type="button" data-fmt="bullet">☰ נקודות</button>
+        <button type="button" data-fmt="number">1. מספור</button>
+      </div>
       <textarea id="f-title" class="autogrow-textarea" rows="1" placeholder="לדוגמה: להתקין לוח חשמל בקומה 3" autofocus>${esc(task.title)}</textarea>
+      <div id="f-title-preview" class="note-preview"><span style="color:var(--text-dim)">התצוגה תופיע כאן</span></div>
     </div>
     <div class="field">
       <label>סוג</label>
@@ -751,6 +763,7 @@ function openTaskForm(taskId, presetLocation) {
   const task = taskId ? Store.data.tasks.find((t) => t.id === taskId) : null;
   openSheet(taskFormHTML(task));
   autoGrow($("#f-title"));
+  updateNotePreview($("#f-title"));
   wireFloorSelect(task ? task.buildingId : (presetLocation && presetLocation.buildingId), task ? task.floorId : (presetLocation && presetLocation.floorId));
   if (presetLocation && !task) {
     $("#f-building").value = presetLocation.buildingId || "";
@@ -1333,7 +1346,7 @@ function locationDetailHTML(buildingId, floorId) {
       <button class="btn-secondary" id="loc-add-task">+ משימה חדשה במיקום זה</button>
       ${tasks.length ? tasks.map((t) => `
         <div class="loc-mini-card" data-open-task="${t.id}" style="cursor:pointer">
-          <b>${esc(t.title)}</b>
+          <div>${formatNoteText(t.title)}</div>
           <div class="sub">${t.status === "done" ? "✅ בוצע" : t.status === "in_progress" ? "🟡 בביצוע" : "⚪ פתוח"} · ${esc(t.type)}</div>
         </div>
       `).join("") : `<p style="color:var(--text-dim);font-size:13.5px;margin-top:10px">אין משימות במיקום זה.</p>`}
@@ -1489,9 +1502,63 @@ function openQuestionForm(qid) {
 // ==========================================================
 // MORE: general notes, categories, backup
 // ==========================================================
+function quickNoteFormHTML() {
+  return `
+    <h3>הערה חדשה</h3>
+    <div class="field">
+      <label>שיוך (השאירו על "הערה כללית" אם לא שייך למקום מסוים)</label>
+      <select id="qn-building"><option value="">— הערה כללית —</option>${Store.data.buildings.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join("")}</select>
+    </div>
+    <div class="field" id="qn-floor-field" style="display:none">
+      <label>קומה (אופציונלי — ניתן להשאיר על כל הבניין)</label>
+      <select id="qn-floor"></select>
+    </div>
+    <div class="field">
+      <label>תוכן ההערה</label>
+      <div class="note-toolbar" data-target="qn-text">
+        <button type="button" data-fmt="bold"><b>B</b></button>
+        <button type="button" data-fmt="italic"><i>I</i></button>
+        <button type="button" data-fmt="bullet">☰ נקודות</button>
+        <button type="button" data-fmt="number">1. מספור</button>
+      </div>
+      <textarea id="qn-text" class="autogrow-textarea" rows="1" placeholder="כתוב כאן..." autofocus></textarea>
+      <div id="qn-text-preview" class="note-preview"><span style="color:var(--text-dim)">התצוגה של ההערה תופיע כאן</span></div>
+    </div>
+    <button class="btn-primary" id="qn-save">שמירה</button>
+  `;
+}
+function openQuickNoteForm(presetLocation) {
+  openSheet(quickNoteFormHTML());
+  autoGrow($("#qn-text"));
+  updateNotePreview($("#qn-text"));
+  const bSel = $("#qn-building"), fField = $("#qn-floor-field"), fSel = $("#qn-floor");
+  function refreshFloors() {
+    const b = Store.data.buildings.find((x) => x.id === bSel.value);
+    if (b) {
+      fField.style.display = "";
+      fSel.innerHTML = `<option value="">— כל הבניין (ללא קומה ספציפית) —</option>` + b.floors.map((f) => `<option value="${f.id}">${esc(f.name)}</option>`).join("");
+    } else {
+      fField.style.display = "none";
+      fSel.innerHTML = "";
+    }
+  }
+  bSel.addEventListener("change", refreshFloors);
+  if (presetLocation && presetLocation.buildingId) bSel.value = presetLocation.buildingId;
+  refreshFloors();
+  if (presetLocation && presetLocation.floorId) fSel.value = presetLocation.floorId;
+  $("#qn-save").addEventListener("click", () => {
+    const text = $("#qn-text").value.trim();
+    if (!text) return;
+    if (bSel.value) Store.addLocationNote(bSel.value, fSel.value || null, text);
+    else Store.addGeneralNote(text);
+    closeSheet();
+    renderGeneralNotes();
+    toast("הערה נוספה");
+  });
+}
 function renderGeneralNotes() {
   const list = $("#general-notes-list");
-  const items = [...Store.data.generalNotes].sort((a, b) => a.order - b.order);
+  const items = [...Store.data.generalNotes].sort((a, b) => state.generalNotesSort === "created" ? b.createdAt - a.createdAt : a.order - b.order);
   if (!items.length) { list.innerHTML = `<div class="empty-state" style="padding:20px"><p>אין הערות כלליות.</p></div>`; return; }
   list.innerHTML = items.map((n) => `
     <div class="card" data-id="${n.id}" data-reorder-item style="padding:12px">
@@ -1511,7 +1578,17 @@ function renderGeneralNotes() {
     }
   };
 }
-enableLongPressReorder($("#general-notes-list"), "[data-reorder-item]", (ids) => { Store.reorderGeneralNotes(ids); renderGeneralNotes(); });
+enableLongPressReorder($("#general-notes-list"), "[data-reorder-item]", (ids) => {
+  Store.reorderGeneralNotes(ids);
+  if (state.generalNotesSort !== "manual") { state.generalNotesSort = "manual"; Store.setUiPref("generalNotesSort", "manual"); }
+  renderGeneralNotes();
+});
+$("#general-notes-sort-btn").addEventListener("click", (e) => {
+  openSortMenu(e.currentTarget, state.generalNotesSort, [
+    { value: "manual", label: "סדר ידני (גרירה)" },
+    { value: "created", label: "לפי תאריך יצירה (חדש קודם)" },
+  ], (val) => { state.generalNotesSort = val; Store.setUiPref("generalNotesSort", val); renderGeneralNotes(); });
+});
 $("#general-note-add").addEventListener("click", () => {
   const input = $("#general-note-input");
   const text = input.value.trim();
@@ -1693,7 +1770,7 @@ $("#fab-add").addEventListener("click", () => {
     case "orders": openOrderForm(null); break;
     case "buildings": openBuildingForm(null); break;
     case "questions": openQuestionForm(null); break;
-    case "more": $("#general-note-input").focus(); break;
+    case "more": openQuickNoteForm(); break;
   }
 });
 
