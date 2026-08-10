@@ -662,7 +662,7 @@ input:focus, textarea:focus, select:focus {
 }
 
 /* ---------- header-right / sort button ---------- */
-.header-right { display: flex; align-items: center; gap: 10px; }
+.header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
 .sort-btn {
   background: var(--surface-2);
   border: 1px solid var(--border);

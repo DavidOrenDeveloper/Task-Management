@@ -157,6 +157,7 @@ const state = {
   questionsSort: Store.data.uiPrefs.questionsSort,
   buildingsSort: Store.data.uiPrefs.buildingsSort,
   generalNotesSort: Store.data.uiPrefs.generalNotesSort || "manual",
+  tasksDateOrder: Store.data.uiPrefs.tasksDateOrder || "desc",
 };
 
 // ---------------- Toast ----------------
@@ -303,7 +304,12 @@ function enableLongPressReorder(container, itemSelector, onReorder) {
   let activePointerId = null;
   let scrollLockPrev = null;
 
-  function getItems() { return $$(itemSelector, container); }
+  // Only direct children count as "this container's" reorderable items. Some lists
+  // (e.g. buildings, which contain floors, which are themselves reorderable) nest one
+  // reorder-enabled list inside another; without this guard, a container's query would
+  // also pick up its descendants' items and the two independent drag instances would
+  // fight over the same element.
+  function getItems() { return $$(itemSelector, container).filter((el) => el.parentElement === container); }
 
   function cancelPress() { clearTimeout(pressTimer); pressTimer = null; }
 
@@ -346,7 +352,10 @@ function enableLongPressReorder(container, itemSelector, onReorder) {
 
   container.addEventListener("pointerdown", (e) => {
     const item = e.target.closest(itemSelector);
-    if (!item || !container.contains(item)) return;
+    // Must be a direct child of *this* container — otherwise this press belongs to a
+    // nested reorder list (e.g. a floor row inside a building), and that inner list's
+    // own listener will handle it instead.
+    if (!item || item.parentElement !== container) return;
     if (!e.target.closest(".drag-handle")) return;
     moved = false;
     startX = e.clientX; startY = e.clientY;
@@ -356,8 +365,17 @@ function enableLongPressReorder(container, itemSelector, onReorder) {
     pressTimer = setTimeout(() => { if (!moved) startDrag(item); }, 420);
   });
 
-  container.addEventListener("pointermove", (e) => {
-    if (activePointerId !== null && e.pointerId !== activePointerId) return;
+  // pointermove/pointerup/pointercancel are attached to `document`, not `container`.
+  // Moving dragEl with insertBefore() briefly detaches-and-reattaches it, which some
+  // browsers treat as "removed from the DOM" and silently release pointer capture as a
+  // result. Once capture is lost the pointerup can land on whatever element happens to be
+  // under the finger at that instant — often outside `container` entirely (e.g. past the
+  // last item, into the padding below the list) — so a container-scoped listener simply
+  // never sees it, leaving the drag stuck mid-air and the new order never saved. Listening
+  // on `document` guarantees this instance's own pointerup always arrives, filtered by
+  // activePointerId so unrelated pointers/instances are ignored.
+  document.addEventListener("pointermove", (e) => {
+    if (activePointerId === null || e.pointerId !== activePointerId) return;
     if (!dragEl) {
       if (Math.abs(e.clientX - startX) > 9 || Math.abs(e.clientY - startY) > 9) { moved = true; cancelPress(); }
       return;
@@ -374,9 +392,15 @@ function enableLongPressReorder(container, itemSelector, onReorder) {
     else container.appendChild(dragEl);
   }, { passive: false });
 
-  function onUp() { cancelPress(); if (dragEl) finishDrag(); moved = false; activePointerId = null; }
-  container.addEventListener("pointerup", onUp);
-  container.addEventListener("pointercancel", onUp);
+  function onUp(e) {
+    if (activePointerId !== null && e && e.pointerId !== undefined && e.pointerId !== activePointerId) return;
+    cancelPress();
+    if (dragEl) finishDrag();
+    moved = false;
+    activePointerId = null;
+  }
+  document.addEventListener("pointerup", onUp);
+  document.addEventListener("pointercancel", onUp);
 }
 
 // ---------------- Navigation ----------------
@@ -579,7 +603,8 @@ function renderAllListsQuiet() {
 // ==========================================================
 const TASKS_SORT_OPTIONS = [
   { value: "default", label: "ברירת מחדל (סטטוס)" },
-  { value: "created", label: "תאריך יצירה" },
+  { value: "created_desc", label: "תאריך יצירה (חדש→ישן)" },
+  { value: "created_asc", label: "תאריך יצירה (ישן→חדש)" },
   { value: "updated", label: "עודכן לאחרונה" },
   { value: "alpha", label: "לפי א-ב" },
   { value: "priority", label: "דחיפות" },
@@ -590,7 +615,8 @@ const TASKS_SORT_OPTIONS = [
 function sortItems(items, mode, kind) {
   const arr = [...items];
   if (mode === "manual") { arr.sort((a, b) => a.order - b.order); return arr; }
-  if (mode === "created") { arr.sort((a, b) => b.createdAt - a.createdAt); return arr; }
+  if (mode === "created" || mode === "created_desc") { arr.sort((a, b) => b.createdAt - a.createdAt); return arr; }
+  if (mode === "created_asc") { arr.sort((a, b) => a.createdAt - b.createdAt); return arr; }
   if (mode === "updated") { arr.sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)); return arr; }
   if (mode === "alpha") { arr.sort((a, b) => (a.title || a.text || "").localeCompare(b.title || b.text || "", "he")); return arr; }
   if (mode === "priority" && kind === "task") { arr.sort((a, b) => (b.priority === "high") - (a.priority === "high")); return arr; }
@@ -693,6 +719,22 @@ $("#tasks-sort-btn").addEventListener("click", (e) => {
     state.tasksSort = val; Store.setUiPref("tasksSort", val); renderTasks();
   });
 });
+// Small dedicated toggle: creation-date order. Default is newest-first ("desc");
+// each tap flips the direction and immediately applies it as the active sort.
+function updateTasksDateToggleBtn() {
+  const btn = $("#tasks-date-toggle-btn");
+  if (!btn) return;
+  btn.textContent = state.tasksDateOrder === "desc" ? "⬇ חדש→ישן" : "⬆ ישן→חדש";
+}
+$("#tasks-date-toggle-btn").addEventListener("click", () => {
+  state.tasksDateOrder = state.tasksDateOrder === "desc" ? "asc" : "desc";
+  Store.setUiPref("tasksDateOrder", state.tasksDateOrder);
+  state.tasksSort = state.tasksDateOrder === "desc" ? "created_desc" : "created_asc";
+  Store.setUiPref("tasksSort", state.tasksSort);
+  updateTasksDateToggleBtn();
+  renderTasks();
+});
+updateTasksDateToggleBtn();
 enableLongPressReorder($("#tasks-list"), "[data-reorder-item]", (ids) => {
   Store.reorderTasks(ids);
   if (state.tasksSort !== "manual") { state.tasksSort = "manual"; Store.setUiPref("tasksSort", "manual"); }

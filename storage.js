@@ -38,6 +38,7 @@ function defaultData() {
       ordersSort: "default",
       questionsSort: "default",
       buildingsSort: "default",
+      tasksDateOrder: "desc", // "desc" = newest first (default), "asc" = oldest first
     },
   };
 }
