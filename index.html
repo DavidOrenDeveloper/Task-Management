@@ -45,7 +45,6 @@
       <h2>משימות</h2>
       <div class="header-right">
         <span class="count" id="tasks-count"></span>
-        <button class="sort-btn" id="tasks-date-toggle-btn" title="מיון לפי תאריך יצירה">⬇ חדש→ישן</button>
         <button class="sort-btn" id="tasks-sort-btn" data-list="tasks">⇅ מיון</button>
       </div>
     </div>
@@ -120,17 +119,11 @@
       <button class="sort-btn" id="general-notes-sort-btn">⇅ מיון</button>
     </div>
     <div id="general-notes-list"></div>
-    <div class="note-toolbar" data-target="general-note-input">
-      <button type="button" data-fmt="bold"><b>B</b></button>
-      <button type="button" data-fmt="italic"><i>I</i></button>
-      <button type="button" data-fmt="bullet">☰ נקודות</button>
-      <button type="button" data-fmt="number">1. מספור</button>
-    </div>
+    <div id="general-note-input-wrap"></div>
     <div class="inline-add">
-      <textarea id="general-note-input" class="autogrow-textarea" rows="1" placeholder="הערה חדשה..."></textarea>
-      <button id="general-note-add">הוסף</button>
+      <input type="number" id="general-note-urgency" placeholder="דחיפות" min="1" step="1" title="מספר דחיפות (אופציונלי, 1 = הכי דחוף)" class="urgency-input">
+      <button id="general-note-add">הוסף הערה</button>
     </div>
-    <div id="general-note-input-preview" class="note-preview"><span style="color:var(--text-dim)">התצוגה של ההערה תופיע כאן</span></div>
 
     <div class="section-title">תזכורות והתראות</div>
     <div class="settings-group">

@@ -1,100 +1,158 @@
 // app.js — ניווט, רינדור, וטיפול באירועים
-const APP_VERSION = "2.1.0";
+const APP_VERSION = "2.2.0";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const esc = (s) => (s || "").toString().replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-function autoGrow(el) { el.style.height = "auto"; el.style.height = `${el.scrollHeight}px`; }
-function updateNotePreview(ta) {
-  const preview = document.getElementById(`${ta.id}-preview`);
-  if (preview) preview.innerHTML = ta.value.trim() ? formatNoteText(ta.value) : `<span style="color:var(--text-dim)">התצוגה של ההערה תופיע כאן</span>`;
+// ==========================================================
+// Rich text editor (real inline formatting: bold / italic / lists / alignment / colors)
+// Formatting is applied live to the text itself via contenteditable + execCommand,
+// the same way a normal word processor does — no separate markdown+preview needed.
+// Saved content is sanitized HTML (see sanitizeHtml). Older notes that were saved as
+// plain/markdown text (from a previous version of the app) still render correctly via
+// the legacy formatNoteText() fallback inside renderRichText().
+// ==========================================================
+const RICH_ALLOWED_TAGS = new Set(["B", "STRONG", "I", "EM", "UL", "OL", "LI", "BR", "DIV", "SPAN", "P"]);
+function sanitizeRichAttrs(el) {
+  const style = el.getAttribute("style");
+  [...el.attributes].forEach((a) => el.removeAttribute(a.name));
+  if (!style) return;
+  const kept = [];
+  style.split(";").forEach((decl) => {
+    const idx = decl.indexOf(":");
+    if (idx === -1) return;
+    const prop = decl.slice(0, idx).trim().toLowerCase();
+    const val = decl.slice(idx + 1).trim();
+    if (!val) return;
+    if (prop === "color" || prop === "background-color") {
+      if (/^(#[0-9a-f]{3,8}|rgb\([\d,\s]+\)|rgba\([\d,.\s]+\)|[a-z]+)$/i.test(val)) kept.push(`${prop}:${val}`);
+    } else if (prop === "text-align") {
+      if (/^(left|right|center|justify)$/i.test(val)) kept.push(`${prop}:${val}`);
+    } else if (prop === "font-weight") {
+      if (/^(bold|normal|\d+)$/i.test(val)) kept.push(`${prop}:${val}`);
+    } else if (prop === "font-style") {
+      if (/^(italic|normal)$/i.test(val)) kept.push(`${prop}:${val}`);
+    }
+  });
+  if (kept.length) el.setAttribute("style", kept.join(";"));
 }
+function cleanRichNode(node) {
+  let child = node.firstChild;
+  while (child) {
+    if (child.nodeType === Node.ELEMENT_NODE) {
+      if (!RICH_ALLOWED_TAGS.has(child.tagName)) {
+        const next = child.nextSibling;
+        const firstMoved = child.firstChild;
+        while (child.firstChild) node.insertBefore(child.firstChild, child);
+        node.removeChild(child);
+        child = firstMoved || next;
+        continue;
+      }
+      sanitizeRichAttrs(child);
+      cleanRichNode(child);
+      child = child.nextSibling;
+      continue;
+    } else if (child.nodeType === Node.TEXT_NODE) {
+      child = child.nextSibling;
+      continue;
+    } else {
+      const next = child.nextSibling;
+      node.removeChild(child);
+      child = next;
+      continue;
+    }
+  }
+}
+function sanitizeHtml(html) {
+  const tpl = document.createElement("template");
+  tpl.innerHTML = html;
+  cleanRichNode(tpl.content);
+  return tpl.innerHTML;
+}
+function looksLikeHtml(s) { return /<\/?[a-z][\s\S]*>/i.test(s || ""); }
+// Renders a saved field for read-only display: sanitized HTML if it's rich content
+// (new format), or runs it through the legacy markdown-ish formatter for old plain-text notes.
+function renderRichText(raw) {
+  if (!raw) return "";
+  return looksLikeHtml(raw) ? sanitizeHtml(raw) : formatNoteText(raw);
+}
+// Plain-text version of a saved field, for search matching / previews (strips tags & markdown).
+function stripRichText(raw) {
+  if (!raw) return "";
+  const div = document.createElement("div");
+  div.innerHTML = looksLikeHtml(raw) ? sanitizeHtml(raw) : raw;
+  return (div.textContent || "").replace(/\s+/g, " ").trim();
+}
+function richEditorHTML(id, placeholder, html) {
+  return `
+    <div class="rich-toolbar" data-target="${id}">
+      <button type="button" data-fmt="bold" title="הדגשה"><b>B</b></button>
+      <button type="button" data-fmt="italic" title="נטוי"><i>I</i></button>
+      <span class="rich-sep"></span>
+      <button type="button" data-fmt="bullet" title="רשימת נקודות">☰</button>
+      <button type="button" data-fmt="number" title="רשימה ממוספרת">1.</button>
+      <span class="rich-sep"></span>
+      <button type="button" data-fmt="alignRight" title="יישור לימין">➡</button>
+      <button type="button" data-fmt="alignCenter" title="יישור למרכז">↔</button>
+      <button type="button" data-fmt="alignLeft" title="יישור לשמאל">⬅</button>
+      <span class="rich-sep"></span>
+      <label class="rich-color-btn" title="צבע טקסט">A<input type="color" data-fmt="color" value="#f5b700"></label>
+      <label class="rich-color-btn rich-color-bg" title="צבע רקע">A<input type="color" data-fmt="bgcolor" value="#fff3b0"></label>
+      <button type="button" data-fmt="clear" title="ניקוי עיצוב">⟲</button>
+    </div>
+    <div id="${id}" class="rich-editor" contenteditable="true" data-placeholder="${esc(placeholder || "")}">${html || ""}</div>
+  `;
+}
+function getRichValue(id) {
+  const el = document.getElementById(id);
+  if (!el) return "";
+  const html = el.innerHTML.trim();
+  if (!html || /^(<br\s*\/?>|&nbsp;|\s)*$/i.test(html)) return "";
+  return sanitizeHtml(html);
+}
+let richStyleWithCSSReady = false;
+function ensureRichStyleWithCSS() {
+  if (richStyleWithCSSReady) return;
+  try { document.execCommand("styleWithCSS", false, true); } catch (e) {}
+  richStyleWithCSSReady = true;
+}
+const RICH_TOOLBAR_COMMANDS = {
+  bold: "bold", italic: "italic",
+  bullet: "insertUnorderedList", number: "insertOrderedList",
+  alignRight: "justifyRight", alignCenter: "justifyCenter", alignLeft: "justifyLeft",
+};
+// Prevent toolbar buttons from stealing focus/selection away from the editor before we
+// run execCommand — otherwise the selection collapses and formatting has nothing to apply to.
+document.addEventListener("mousedown", (e) => {
+  if (e.target.closest(".rich-toolbar button[data-fmt]")) e.preventDefault();
+});
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest(".rich-toolbar button[data-fmt]");
+  if (!btn) return;
+  const toolbar = btn.closest(".rich-toolbar");
+  const el = document.getElementById(toolbar.dataset.target);
+  if (!el) return;
+  el.focus();
+  ensureRichStyleWithCSS();
+  const fmt = btn.dataset.fmt;
+  if (RICH_TOOLBAR_COMMANDS[fmt]) document.execCommand(RICH_TOOLBAR_COMMANDS[fmt], false, null);
+  else if (fmt === "clear") document.execCommand("removeFormat", false, null);
+});
 document.addEventListener("input", (e) => {
-  if (e.target.classList && e.target.classList.contains("autogrow-textarea")) {
-    autoGrow(e.target);
-    updateNotePreview(e.target);
-    e.target.scrollIntoView({ block: "nearest" });
+  const input = e.target;
+  if (input.matches && input.matches('.rich-toolbar input[type="color"]')) {
+    const toolbar = input.closest(".rich-toolbar");
+    const el = document.getElementById(toolbar.dataset.target);
+    if (!el) return;
+    el.focus();
+    ensureRichStyleWithCSS();
+    document.execCommand(input.dataset.fmt === "color" ? "foreColor" : "hiliteColor", false, input.value);
   }
 });
 
-// ---------------- Simple note formatting toolbar (bold / italic / lists) ----------------
-// Textareas can't show real bold/italic while typing, so we use lightweight markdown-style
-// markers (**bold**, *italic*, "- " bullets, "1. " numbers), a live preview under the box
-// renders them properly (see formatNoteText below), and that's also how saved notes display.
-function currentLineInfo(val, pos) {
-  const lineStart = val.lastIndexOf("\n", pos - 1) + 1;
-  return { lineStart, line: val.slice(lineStart, pos) };
-}
-function nextListNumber(val, lineStart) {
-  if (lineStart === 0) return 1;
-  const { lineStart: prevStart, line: prevLineFull } = currentLineInfo(val, lineStart - 1);
-  const prevLine = val.slice(prevStart, lineStart - 1);
-  const m = prevLine.match(/^(\d+)\.\s/);
-  return m ? parseInt(m[1], 10) + 1 : 1;
-}
-function applyNoteFormat(ta, fmt) {
-  const start = ta.selectionStart, end = ta.selectionEnd;
-  const val = ta.value;
-  const selected = val.slice(start, end);
-  if (fmt === "bold" || fmt === "italic") {
-    const marker = fmt === "bold" ? "**" : "*";
-    const placeholder = fmt === "bold" ? "טקסט מודגש" : "טקסט נטוי";
-    const inner = selected || placeholder;
-    ta.value = val.slice(0, start) + marker + inner + marker + val.slice(end);
-    const from = start + marker.length;
-    ta.focus();
-    ta.setSelectionRange(from, from + inner.length);
-  } else if (fmt === "bullet" || fmt === "number") {
-    const { lineStart } = currentLineInfo(val, start);
-    const prefix = fmt === "bullet" ? "- " : `${nextListNumber(val, lineStart)}. `;
-    ta.value = val.slice(0, lineStart) + prefix + val.slice(lineStart);
-    const pos = start + prefix.length;
-    ta.focus();
-    ta.setSelectionRange(pos, pos);
-  }
-  autoGrow(ta);
-  updateNotePreview(ta);
-}
-document.addEventListener("click", (e) => {
-  const btn = e.target.closest("[data-fmt]");
-  if (!btn) return;
-  const toolbar = btn.closest(".note-toolbar");
-  const ta = toolbar && document.getElementById(toolbar.dataset.target);
-  if (ta) applyNoteFormat(ta, btn.dataset.fmt);
-});
-// Pressing Enter inside a bullet/numbered line continues the list (with the number going
-// up by one); pressing Enter on an empty list item ends the list instead.
-document.addEventListener("keydown", (e) => {
-  if (e.key !== "Enter" || !e.target.classList || !e.target.classList.contains("autogrow-textarea")) return;
-  const ta = e.target;
-  const val = ta.value;
-  const start = ta.selectionStart;
-  const { lineStart, line } = currentLineInfo(val, start);
-  const numMatch = line.match(/^(\d+)\.\s(.*)$/);
-  const bulletMatch = line.match(/^- (.*)$/);
-  if ((numMatch && !numMatch[2].trim()) || (bulletMatch && !bulletMatch[1].trim())) {
-    e.preventDefault();
-    ta.value = val.slice(0, lineStart) + val.slice(start);
-    ta.setSelectionRange(lineStart, lineStart);
-  } else if (numMatch) {
-    e.preventDefault();
-    const insert = `\n${parseInt(numMatch[1], 10) + 1}. `;
-    ta.value = val.slice(0, start) + insert + val.slice(start);
-    const pos = start + insert.length;
-    ta.setSelectionRange(pos, pos);
-  } else if (bulletMatch) {
-    e.preventDefault();
-    const insert = `\n- `;
-    ta.value = val.slice(0, start) + insert + val.slice(start);
-    const pos = start + insert.length;
-    ta.setSelectionRange(pos, pos);
-  } else {
-    return;
-  }
-  autoGrow(ta);
-  updateNotePreview(ta);
-});
+// ---------------- Legacy plain-text/markdown renderer (kept only for notes saved by an
+// older version of the app, before the rich text editor above existed) ----------------
 function formatNoteInline(t) {
   return t.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/\*(.+?)\*/g, "<i>$1</i>");
 }
@@ -157,7 +215,10 @@ const state = {
   questionsSort: Store.data.uiPrefs.questionsSort,
   buildingsSort: Store.data.uiPrefs.buildingsSort,
   generalNotesSort: Store.data.uiPrefs.generalNotesSort || "manual",
-  tasksDateOrder: Store.data.uiPrefs.tasksDateOrder || "desc",
+  tasksUrgencyDir: Store.data.uiPrefs.tasksUrgencyDir || "asc",
+  generalNotesUrgencyDir: Store.data.uiPrefs.generalNotesUrgencyDir || "asc",
+  locNotesSort: "manual",
+  locNotesUrgencyDir: Store.data.uiPrefs.locNotesUrgencyDir || "asc",
 };
 
 // ---------------- Toast ----------------
@@ -607,10 +668,49 @@ const TASKS_SORT_OPTIONS = [
   { value: "created_asc", label: "תאריך יצירה (ישן→חדש)" },
   { value: "updated", label: "עודכן לאחרונה" },
   { value: "alpha", label: "לפי א-ב" },
-  { value: "priority", label: "דחיפות" },
+  { value: "priority", label: "דחיפות (רגיל/דחוף)" },
+  { value: "urgencyNum", label: "לפי מספר דחיפות" },
   { value: "due", label: "מועד תזכורת" },
   { value: "manual", label: "סדר ידני (גרירה)" },
 ];
+
+// ---------------- Numeric urgency ranking (shared by tasks + notes) ----------------
+// Lower number = more urgent (1 is most urgent). Items without a number always sort last.
+// Clicking the same "urgency number" sort option again flips the direction — this is handled
+// by each screen's own onSelect callback (see wireUrgencySortOption below), not here.
+function urgencyVal(item) {
+  const v = item && item.urgency;
+  return (v === null || v === undefined || v === "") ? null : Number(v);
+}
+function compareUrgency(a, b, dir) {
+  const av = urgencyVal(a), bv = urgencyVal(b);
+  if (av === null && bv === null) return 0;
+  if (av === null) return 1;
+  if (bv === null) return -1;
+  return dir === "asc" ? av - bv : bv - av;
+}
+function urgencyBadgeHTML(item) {
+  const v = urgencyVal(item);
+  return v === null ? "" : `<span class="tag urgency-num">🔢 ${esc(String(v))}</span>`;
+}
+function urgencyFieldHTML(id, value) {
+  return `
+    <div class="field">
+      <label>מספר דחיפות (אופציונלי — ככל שקטן יותר, דחוף יותר: 1 = הכי דחוף)</label>
+      <input type="number" id="${id}" value="${value === null || value === undefined ? "" : esc(String(value))}" placeholder="לדוגמה: 1" min="1" step="1" style="max-width:120px">
+    </div>
+  `;
+}
+function readUrgencyField(id) {
+  const raw = ($(`#${id}`) && $(`#${id}`).value || "").trim();
+  if (!raw) return null;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) ? n : null;
+}
+// Wires a "sort by urgency number" menu option so a second click on the same option
+// flips direction (asc <-> desc), matching how every other repeat-click-to-reverse
+// sort in the app behaves.
+function urgencySortLabel(dir) { return `לפי מספר דחיפות ${dir === "asc" ? "(1 קודם ⬆)" : "(הגבוה קודם ⬇)"}`; }
 
 function sortItems(items, mode, kind) {
   const arr = [...items];
@@ -661,6 +761,8 @@ function renderTasks() {
       if (order[a.status] !== order[b.status]) return order[a.status] - order[b.status];
       return b.updatedAt - a.updatedAt;
     });
+  } else if (state.tasksSort === "urgencyNum") {
+    items.sort((a, b) => compareUrgency(a, b, state.tasksUrgencyDir));
   } else {
     items = sortItems(items, state.tasksSort, "task");
   }
@@ -681,12 +783,13 @@ function renderTasks() {
       <div class="card-top">
         <span class="drag-handle">⠿</span>
         <div class="status-dot ${t.status}" data-action="cycle-status"></div>
-        <div class="card-title ${t.status === "done" ? "strike" : ""}">${formatNoteText(t.title)}</div>
+        <div class="card-title rich-content ${t.status === "done" ? "strike" : ""}">${renderRichText(t.title)}</div>
       </div>
       <div class="card-meta">
         <span class="tag type">${esc(t.type)}</span>
         ${loc ? `<span class="tag loc">📍 ${esc(loc)}</span>` : ""}
         ${t.priority === "high" ? `<span class="tag prio-high">דחוף</span>` : ""}
+        ${urgencyBadgeHTML(t)}
         ${t.hold ? `<span class="tag hold">⏸ בהמתנה</span>` : ""}
         ${t.dueAt && !t.hold && t.status !== "done" ? `<span class="tag due ${urgency === "overdue" ? "due-overdue" : urgency === "soon" ? "due-soon" : "due-later"}">⏰ ${esc(formatDueLabel(t.dueAt))}</span>` : ""}
       </div>
@@ -715,26 +818,17 @@ $$("#tasks-status-filter .chip").forEach((c) => c.addEventListener("click", () =
   renderTasks();
 }));
 $("#tasks-sort-btn").addEventListener("click", (e) => {
-  openSortMenu(e.currentTarget, state.tasksSort, TASKS_SORT_OPTIONS, (val) => {
+  // The date-order toggle used to be its own dedicated button; now it just lives as two
+  // entries ("חדש→ישן" / "ישן→חדש") inside this same sort menu, like every other sort mode.
+  const options = TASKS_SORT_OPTIONS.map((o) => o.value === "urgencyNum" ? { ...o, label: urgencySortLabel(state.tasksUrgencyDir) } : o);
+  openSortMenu(e.currentTarget, state.tasksSort, options, (val) => {
+    if (val === "urgencyNum") {
+      state.tasksUrgencyDir = (state.tasksSort === "urgencyNum" && state.tasksUrgencyDir === "asc") ? "desc" : "asc";
+      Store.setUiPref("tasksUrgencyDir", state.tasksUrgencyDir);
+    }
     state.tasksSort = val; Store.setUiPref("tasksSort", val); renderTasks();
   });
 });
-// Small dedicated toggle: creation-date order. Default is newest-first ("desc");
-// each tap flips the direction and immediately applies it as the active sort.
-function updateTasksDateToggleBtn() {
-  const btn = $("#tasks-date-toggle-btn");
-  if (!btn) return;
-  btn.textContent = state.tasksDateOrder === "desc" ? "⬇ חדש→ישן" : "⬆ ישן→חדש";
-}
-$("#tasks-date-toggle-btn").addEventListener("click", () => {
-  state.tasksDateOrder = state.tasksDateOrder === "desc" ? "asc" : "desc";
-  Store.setUiPref("tasksDateOrder", state.tasksDateOrder);
-  state.tasksSort = state.tasksDateOrder === "desc" ? "created_desc" : "created_asc";
-  Store.setUiPref("tasksSort", state.tasksSort);
-  updateTasksDateToggleBtn();
-  renderTasks();
-});
-updateTasksDateToggleBtn();
 enableLongPressReorder($("#tasks-list"), "[data-reorder-item]", (ids) => {
   Store.reorderTasks(ids);
   if (state.tasksSort !== "manual") { state.tasksSort = "manual"; Store.setUiPref("tasksSort", "manual"); }
@@ -768,19 +862,12 @@ function reminderSectionHTML(task) {
 
 function taskFormHTML(task) {
   const isEdit = !!task;
-  task = task || { title: "", type: Store.data.taskTypes[0] || "", priority: "normal", buildingId: "", floorId: "", budgetCode: "" };
+  task = task || { title: "", type: Store.data.taskTypes[0] || "", priority: "normal", buildingId: "", floorId: "", budgetCode: "", urgency: null };
   return `
     <h3>${isEdit ? "עריכת משימה" : "משימה חדשה"}</h3>
     <div class="field">
       <label>תיאור המשימה</label>
-      <div class="note-toolbar" data-target="f-title">
-        <button type="button" data-fmt="bold"><b>B</b></button>
-        <button type="button" data-fmt="italic"><i>I</i></button>
-        <button type="button" data-fmt="bullet">☰ נקודות</button>
-        <button type="button" data-fmt="number">1. מספור</button>
-      </div>
-      <textarea id="f-title" class="autogrow-textarea" rows="1" placeholder="לדוגמה: להתקין לוח חשמל בקומה 3" autofocus>${esc(task.title)}</textarea>
-      <div id="f-title-preview" class="note-preview"><span style="color:var(--text-dim)">התצוגה תופיע כאן</span></div>
+      ${richEditorHTML("f-title", "לדוגמה: להתקין לוח חשמל בקומה 3", task.title)}
     </div>
     <div class="field">
       <label>סוג</label>
@@ -794,6 +881,7 @@ function taskFormHTML(task) {
         <div class="select-chip ${task.priority === "high" ? "active" : ""}" data-val="high">דחופה</div>
       </div>
     </div>
+    ${urgencyFieldHTML("f-urgency", task.urgency)}
     ${budgetFieldHTML(task.budgetCode)}
     ${reminderSectionHTML(isEdit ? task : null)}
     <button class="btn-primary" id="save-task">${isEdit ? "שמירה" : "הוספת משימה"}</button>
@@ -804,8 +892,6 @@ function taskFormHTML(task) {
 function openTaskForm(taskId, presetLocation) {
   const task = taskId ? Store.data.tasks.find((t) => t.id === taskId) : null;
   openSheet(taskFormHTML(task));
-  autoGrow($("#f-title"));
-  updateNotePreview($("#f-title"));
   wireFloorSelect(task ? task.buildingId : (presetLocation && presetLocation.buildingId), task ? task.floorId : (presetLocation && presetLocation.floorId));
   if (presetLocation && !task) {
     $("#f-building").value = presetLocation.buildingId || "";
@@ -829,7 +915,7 @@ function openTaskForm(taskId, presetLocation) {
     selPriority = e.target.dataset.val;
   });
   $("#save-task").addEventListener("click", async () => {
-    const title = $("#f-title").value.trim();
+    const title = getRichValue("f-title");
     if (!title) { toast("צריך להזין תיאור למשימה"); return; }
     const dueRaw = $("#f-due").value;
     const dueAt = dueRaw ? new Date(dueRaw).getTime() : null;
@@ -846,6 +932,7 @@ function openTaskForm(taskId, presetLocation) {
       buildingId: $("#f-building").value || null,
       floorId: $("#f-floor").value || null,
       budgetCode: $("#f-budget").value.trim(),
+      urgency: readUrgencyField("f-urgency"),
       dueAt,
       reminder,
       hold: dueAt ? (task ? task.hold : false) : false,
@@ -1047,13 +1134,13 @@ function renderOrders() {
     <div class="card" data-id="${o.id}" data-reorder-item>
       <div class="card-top">
         <span class="drag-handle">⠿</span>
-        <div class="card-title">${esc(o.title)} ${o.qty > 1 ? `<span class="mono" style="color:var(--text-dim);font-size:13px">×${o.qty}</span>` : ""}</div>
+        <div class="card-title rich-content">${renderRichText(o.title)} ${o.qty > 1 ? `<span class="mono" style="color:var(--text-dim);font-size:13px">×${o.qty}</span>` : ""}</div>
       </div>
       <div class="card-meta">
         <span class="tag type">${esc(o.category)}</span>
         ${loc ? `<span class="tag loc">📍 ${esc(loc)}</span>` : ""}
       </div>
-      ${o.notes ? `<div class="card-notes"><div class="note-line"><span>${esc(o.notes)}</span></div></div>` : ""}
+      ${o.notes ? `<div class="card-notes"><div class="note-line"><span class="rich-content">${renderRichText(o.notes)}</span></div></div>` : ""}
       ${o.budgetCode || budget ? `<button class="budget-toggle" data-action="toggle-budget">💰 סעיף תקציבי</button><div class="budget-value">קוד: <b>${esc(o.budgetCode || budget)}</b></div>` : ""}
       <div class="order-steps">
         ${ORDER_STEPS.map((s, i) => `<div class="order-step ${i <= stepIdx ? "active" : ""}" data-step="${s.key}">${s.label}</div>`).join("")}
@@ -1111,7 +1198,7 @@ function orderFormHTML(order) {
     <h3>${isEdit ? "עריכת הזמנה" : "פריט חדש להזמנה"}</h3>
     <div class="field">
       <label>מה צריך להזמין</label>
-      <input type="text" id="f-title" value="${esc(order.title)}" placeholder="לדוגמה: כבל NYY 3×2.5" autofocus>
+      ${richEditorHTML("f-title", "לדוגמה: כבל NYY 3×2.5", order.title)}
     </div>
     <div class="field-row">
       <div class="field">
@@ -1126,7 +1213,7 @@ function orderFormHTML(order) {
     ${buildingSelectHTML(order.buildingId, order.floorId)}
     <div class="field">
       <label>הערה (אופציונלי)</label>
-      <textarea id="f-notes" placeholder="פרטים נוספים...">${esc(order.notes)}</textarea>
+      ${richEditorHTML("f-notes", "פרטים נוספים...", order.notes)}
     </div>
     ${budgetFieldHTML(order.budgetCode)}
     <button class="btn-primary" id="save-order">${isEdit ? "שמירה" : "הוספה לרשימה"}</button>
@@ -1152,7 +1239,7 @@ function openOrderForm(orderId, presetLocation) {
     onSelect: (val) => { selCategory = val; },
   });
   $("#save-order").addEventListener("click", () => {
-    const title = $("#f-title").value.trim();
+    const title = getRichValue("f-title");
     if (!title) { toast("צריך להזין שם פריט"); return; }
     const payload = {
       title,
@@ -1160,7 +1247,7 @@ function openOrderForm(orderId, presetLocation) {
       qty: parseInt($("#f-qty").value) || 1,
       buildingId: $("#f-building").value || null,
       floorId: $("#f-floor").value || null,
-      notes: $("#f-notes").value.trim(),
+      notes: getRichValue("f-notes"),
       budgetCode: $("#f-budget").value.trim(),
     };
     if (order) { Store.updateOrder(order.id, payload); toast("עודכן"); }
@@ -1204,10 +1291,14 @@ function renderBuildings() {
     list.innerHTML = `<div class="empty-state"><div class="big">🏢</div><p>עדיין לא נוספו בניינים.<br>הוסף בניין כדי לשייך אליו משימות והזמנות.</p></div>`;
     return;
   }
-  list.innerHTML = buildings.map((b) => `
+  list.innerHTML = buildings.map((b, idx) => `
     <div class="building-block" data-id="${b.id}" data-reorder-item>
       <div class="building-head" data-action="toggle">
         <div class="name"><span class="drag-handle">⠿</span> 🏢 ${esc(b.name)}</div>
+        <div class="building-order-btns">
+          <button type="button" class="order-btn" data-action="move-up" title="הזז למעלה" ${idx === 0 ? "disabled" : ""}>⬆</button>
+          <button type="button" class="order-btn" data-action="move-down" title="הזז למטה" ${idx === buildings.length - 1 ? "disabled" : ""}>⬇</button>
+        </div>
         <div class="arrow">⌄</div>
       </div>
       <div class="floor-list">
@@ -1248,6 +1339,14 @@ async function buildingsClickHandler(e) {
   if (!block) return;
   const bid = block.dataset.id;
   const action = e.target.closest(".drag-handle") ? null : (e.target.dataset.action || (e.target.closest("[data-action]") && e.target.closest("[data-action]").dataset.action));
+  if (action === "move-up" || action === "move-down") {
+    const wasOpen = block.classList.contains("open");
+    Store.moveBuilding(bid, action === "move-up" ? -1 : 1);
+    if (state.buildingsSort !== "default") { state.buildingsSort = "default"; Store.setUiPref("buildingsSort", "default"); }
+    renderBuildings();
+    if (wasOpen) { const blk = $(`.building-block[data-id="${bid}"]`); if (blk) blk.classList.add("open"); }
+    return;
+  }
   if (action === "toggle" || (!action && !e.target.closest(".drag-handle") && e.target.closest(".building-head"))) {
     const isOpen = block.classList.contains("open");
     if (isOpen) {
@@ -1350,7 +1449,12 @@ let locTab = "notes";
 function locationDetailHTML(buildingId, floorId) {
   const b = Store.data.buildings.find((x) => x.id === buildingId);
   const label = floorId ? `${b.name} · ${floorName(buildingId, floorId)}` : `${b.name} (כללי לבניין)`;
-  const { tasks, orders, notes } = Store.itemsForLocation(buildingId, floorId);
+  const { tasks, orders, notes: notesRaw } = Store.itemsForLocation(buildingId, floorId);
+  const notes = [...notesRaw].sort((a, c) => {
+    if (state.locNotesSort === "urgencyNum") return compareUrgency(a, c, state.locNotesUrgencyDir);
+    if (state.locNotesSort === "created") return c.createdAt - a.createdAt;
+    return a.order - c.order;
+  });
   return `
     <h3>📍 ${esc(label)}</h3>
     <div class="loc-tabs">
@@ -1359,27 +1463,25 @@ function locationDetailHTML(buildingId, floorId) {
       <div class="loc-tab ${locTab === "orders" ? "active" : ""}" data-tab="orders">הזמנות (${orders.length})</div>
     </div>
     <div class="loc-panel ${locTab === "notes" ? "active" : ""}" data-panel="notes">
-      <div class="note-toolbar" data-target="loc-note-input">
-        <button type="button" data-fmt="bold"><b>B</b></button>
-        <button type="button" data-fmt="italic"><i>I</i></button>
-        <button type="button" data-fmt="bullet">☰ נקודות</button>
-        <button type="button" data-fmt="number">1. מספור</button>
-      </div>
+      ${richEditorHTML("loc-note-input", "הערה חדשה למיקום זה...", "")}
       <div class="inline-add">
-        <textarea id="loc-note-input" class="autogrow-textarea" rows="1" placeholder="הערה חדשה למיקום זה..."></textarea>
-        <button id="loc-note-add">הוסף</button>
+        <input type="number" id="loc-note-urgency" placeholder="דחיפות" min="1" step="1" title="מספר דחיפות (אופציונלי, 1 = הכי דחוף)" class="urgency-input">
+        <button id="loc-note-add">הוסף הערה</button>
       </div>
-      <div id="loc-note-input-preview" class="note-preview"><span style="color:var(--text-dim)">התצוגה של ההערה תופיע כאן</span></div>
-      <p class="hint-text">לחיצה ארוכה על הערה מזיזה את הסדר.</p>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+        <p class="hint-text" style="margin:0">לחיצה ארוכה על הערה מזיזה את הסדר.</p>
+        <button class="sort-btn" id="loc-notes-sort-btn">⇅ מיון</button>
+      </div>
       <div id="loc-notes-list">
         ${notes.length ? notes.map((n) => `
           <div class="loc-mini-card" data-id="${n.id}" data-reorder-item>
             <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
               <span class="drag-handle">⠿</span>
-              <span style="flex:1">${formatNoteText(n.text)}</span>
+              <span class="rich-content" style="flex:1">${renderRichText(n.text)}</span>
+              <button class="note-edit" data-edit-note="${n.id}">✏️</button>
               <button class="note-del" data-del-note="${n.id}">✕</button>
             </div>
-            <div class="sub">${timeAgo(n.createdAt)}</div>
+            <div class="sub">${urgencyBadgeHTML(n)} ${timeAgo(n.createdAt)}</div>
           </div>
         `).join("") : `<p style="color:var(--text-dim);font-size:13.5px">אין הערות עדיין למיקום זה.</p>`}
       </div>
@@ -1388,7 +1490,7 @@ function locationDetailHTML(buildingId, floorId) {
       <button class="btn-secondary" id="loc-add-task">+ משימה חדשה במיקום זה</button>
       ${tasks.length ? tasks.map((t) => `
         <div class="loc-mini-card" data-open-task="${t.id}" style="cursor:pointer">
-          <div>${formatNoteText(t.title)}</div>
+          <div class="rich-content">${renderRichText(t.title)}</div>
           <div class="sub">${t.status === "done" ? "✅ בוצע" : t.status === "in_progress" ? "🟡 בביצוע" : "⚪ פתוח"} · ${esc(t.type)}</div>
         </div>
       `).join("") : `<p style="color:var(--text-dim);font-size:13.5px;margin-top:10px">אין משימות במיקום זה.</p>`}
@@ -1397,7 +1499,7 @@ function locationDetailHTML(buildingId, floorId) {
       <button class="btn-secondary" id="loc-add-order">+ פריט הזמנה במיקום זה</button>
       ${orders.length ? orders.map((o) => `
         <div class="loc-mini-card" data-open-order="${o.id}" style="cursor:pointer">
-          <b>${esc(o.title)}</b>
+          <b class="rich-content">${renderRichText(o.title)}</b>
           <div class="sub">${esc(ORDER_STEPS.find((s) => s.key === o.status).label)} · ${esc(o.category)}</div>
         </div>
       `).join("") : `<p style="color:var(--text-dim);font-size:13.5px;margin-top:10px">אין הזמנות במיקום זה.</p>`}
@@ -1412,24 +1514,44 @@ function renderLocationDetail(buildingId, floorId) {
   openSheet(locationDetailHTML(buildingId, floorId));
   $$(".loc-tab").forEach((t) => t.addEventListener("click", () => { locTab = t.dataset.tab; renderLocationDetail(buildingId, floorId); }));
   $("#loc-note-add").addEventListener("click", () => {
-    const input = $("#loc-note-input");
-    const text = input.value.trim();
+    const text = getRichValue("loc-note-input");
     if (!text) return;
-    Store.addLocationNote(buildingId, floorId, text);
+    const urgency = readUrgencyField("loc-note-urgency");
+    Store.addLocationNote(buildingId, floorId, text, urgency);
     renderLocationDetail(buildingId, floorId);
     toast("הערה נוספה");
   });
   // (Enter just adds a new line here — no keyboard shortcut to submit, since Shift+Enter
   // isn't practical on a phone keyboard. Use the "הוסף" button to save the note.)
+  $("#loc-notes-sort-btn").addEventListener("click", (e) => {
+    const options = [
+      { value: "manual", label: "סדר ידני (גרירה)" },
+      { value: "created", label: "לפי תאריך יצירה (חדש קודם)" },
+      { value: "urgencyNum", label: urgencySortLabel(state.locNotesUrgencyDir) },
+    ];
+    openSortMenu(e.currentTarget, state.locNotesSort, options, (val) => {
+      if (val === "urgencyNum") {
+        state.locNotesUrgencyDir = (state.locNotesSort === "urgencyNum" && state.locNotesUrgencyDir === "asc") ? "desc" : "asc";
+        Store.setUiPref("locNotesUrgencyDir", state.locNotesUrgencyDir);
+      }
+      state.locNotesSort = val;
+      renderLocationDetail(buildingId, floorId);
+    });
+  });
   $$("[data-del-note]").forEach((btn) => btn.addEventListener("click", async (e) => {
     e.stopPropagation();
     const ok = await confirmDialog("מחיקת הערה", "למחוק את ההערה?", "מחיקה");
     if (ok) { Store.deleteLocationNote(btn.dataset.delNote); renderLocationDetail(buildingId, floorId); }
   }));
+  $$("[data-edit-note]").forEach((btn) => btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openEditLocationNoteForm(btn.dataset.editNote, buildingId, floorId);
+  }));
   const notesList = $("#loc-notes-list");
   if (notesList) {
     enableLongPressReorder(notesList, "[data-reorder-item]", (ids) => {
       Store.reorderLocationNotes(buildingId, floorId, ids);
+      if (state.locNotesSort !== "manual") state.locNotesSort = "manual";
       renderLocationDetail(buildingId, floorId);
     });
   }
@@ -1439,6 +1561,27 @@ function renderLocationDetail(buildingId, floorId) {
   if (addOrderBtn) addOrderBtn.addEventListener("click", () => openOrderForm(null, { buildingId, floorId }));
   $$("[data-open-task]").forEach((el) => el.addEventListener("click", () => openTaskForm(el.dataset.openTask)));
   $$("[data-open-order]").forEach((el) => el.addEventListener("click", () => openOrderForm(el.dataset.openOrder)));
+}
+function openEditLocationNoteForm(id, buildingId, floorId) {
+  const n = Store.data.locationNotes.find((x) => x.id === id);
+  if (!n) return;
+  openSheet(`
+    <h3>עריכת הערה</h3>
+    <div class="field">
+      <label>תוכן ההערה</label>
+      ${richEditorHTML("eln-text", "", n.text)}
+    </div>
+    ${urgencyFieldHTML("eln-urgency", n.urgency)}
+    <button class="btn-primary" id="eln-save">שמירה</button>
+  `);
+  $("#eln-save").addEventListener("click", () => {
+    const text = getRichValue("eln-text");
+    if (!text) { toast("צריך להזין תוכן"); return; }
+    Store.updateLocationNote(id, { text, urgency: readUrgencyField("eln-urgency") });
+    closeSheet();
+    renderLocationDetail(buildingId, floorId);
+    toast("נשמר");
+  });
 }
 
 // ==========================================================
@@ -1465,10 +1608,10 @@ function renderQuestions() {
       <div class="card-top">
         <span class="drag-handle">⠿</span>
         <div class="status-dot ${q.status === "answered" ? "done" : "open"}" data-action="toggle-status"></div>
-        <div class="card-title">${esc(q.text)}</div>
+        <div class="card-title rich-content">${renderRichText(q.text)}</div>
       </div>
       ${q.relatedTo ? `<div class="card-meta"><span class="tag">👤 ${esc(q.relatedTo)}</span></div>` : ""}
-      ${q.answer ? `<div class="card-notes"><div class="note-line"><span>💬 ${esc(q.answer)}</span></div></div>` : ""}
+      ${q.answer ? `<div class="card-notes"><div class="note-line"><span class="rich-content">💬 ${renderRichText(q.answer)}</span></div></div>` : ""}
       <div class="card-actions">
         <button data-action="answer">💬 ${q.answer ? "עריכת תשובה" : "הוספת תשובה"}</button>
         <button data-action="edit">✏️ ערוך</button>
@@ -1521,7 +1664,7 @@ function questionFormHTML(q) {
   q = q || { text: "", relatedTo: "" };
   return `
     <h3>${q.text === "" ? "שאלה / בעיה חדשה" : "עריכת שאלה"}</h3>
-    <div class="field"><label>מה השאלה / הבעיה</label><textarea id="f-text" placeholder="לדוגמה: לבדוק מול קבלן הבטון לגבי מיקום שרוולים בקומה 2" autofocus>${esc(q.text)}</textarea></div>
+    <div class="field"><label>מה השאלה / הבעיה</label>${richEditorHTML("f-text", "לדוגמה: לבדוק מול קבלן הבטון לגבי מיקום שרוולים בקומה 2", q.text)}</div>
     <div class="field"><label>קשור ל (אופציונלי)</label><input type="text" id="f-related" value="${esc(q.relatedTo)}" placeholder="לדוגמה: קבלן בטון / מתכנן חשמל"></div>
     <button class="btn-primary" id="save-question">שמירה</button>
   `;
@@ -1530,7 +1673,7 @@ function openQuestionForm(qid) {
   const q = qid ? Store.data.questions.find((x) => x.id === qid) : null;
   openSheet(questionFormHTML(q));
   $("#save-question").addEventListener("click", () => {
-    const text = $("#f-text").value.trim();
+    const text = getRichValue("f-text");
     if (!text) { toast("צריך להזין תוכן"); return; }
     const payload = { text, relatedTo: $("#f-related").value.trim() };
     if (q) Store.updateQuestion(q.id, payload);
@@ -1557,22 +1700,14 @@ function quickNoteFormHTML() {
     </div>
     <div class="field">
       <label>תוכן ההערה</label>
-      <div class="note-toolbar" data-target="qn-text">
-        <button type="button" data-fmt="bold"><b>B</b></button>
-        <button type="button" data-fmt="italic"><i>I</i></button>
-        <button type="button" data-fmt="bullet">☰ נקודות</button>
-        <button type="button" data-fmt="number">1. מספור</button>
-      </div>
-      <textarea id="qn-text" class="autogrow-textarea" rows="1" placeholder="כתוב כאן..." autofocus></textarea>
-      <div id="qn-text-preview" class="note-preview"><span style="color:var(--text-dim)">התצוגה של ההערה תופיע כאן</span></div>
+      ${richEditorHTML("qn-text", "כתוב כאן...", "")}
     </div>
+    ${urgencyFieldHTML("qn-urgency", null)}
     <button class="btn-primary" id="qn-save">שמירה</button>
   `;
 }
 function openQuickNoteForm(presetLocation) {
   openSheet(quickNoteFormHTML());
-  autoGrow($("#qn-text"));
-  updateNotePreview($("#qn-text"));
   const bSel = $("#qn-building"), fField = $("#qn-floor-field"), fSel = $("#qn-floor");
   function refreshFloors() {
     const b = Store.data.buildings.find((x) => x.id === bSel.value);
@@ -1589,10 +1724,11 @@ function openQuickNoteForm(presetLocation) {
   refreshFloors();
   if (presetLocation && presetLocation.floorId) fSel.value = presetLocation.floorId;
   $("#qn-save").addEventListener("click", () => {
-    const text = $("#qn-text").value.trim();
+    const text = getRichValue("qn-text");
     if (!text) return;
-    if (bSel.value) Store.addLocationNote(bSel.value, fSel.value || null, text);
-    else Store.addGeneralNote(text);
+    const urgency = readUrgencyField("qn-urgency");
+    if (bSel.value) Store.addLocationNote(bSel.value, fSel.value || null, text, urgency);
+    else Store.addGeneralNote(text, urgency);
     closeSheet();
     renderGeneralNotes();
     toast("הערה נוספה");
@@ -1600,25 +1736,60 @@ function openQuickNoteForm(presetLocation) {
 }
 function renderGeneralNotes() {
   const list = $("#general-notes-list");
-  const items = [...Store.data.generalNotes].sort((a, b) => state.generalNotesSort === "created" ? b.createdAt - a.createdAt : a.order - b.order);
+  const items = [...Store.data.generalNotes].sort((a, b) => {
+    if (state.generalNotesSort === "created") return b.createdAt - a.createdAt;
+    if (state.generalNotesSort === "urgencyNum") return compareUrgency(a, b, state.generalNotesUrgencyDir);
+    return a.order - b.order;
+  });
   if (!items.length) { list.innerHTML = `<div class="empty-state" style="padding:20px"><p>אין הערות כלליות.</p></div>`; return; }
   list.innerHTML = items.map((n) => `
     <div class="card" data-id="${n.id}" data-reorder-item style="padding:12px">
       <div class="note-line" style="font-size:14px;color:var(--text)">
         <span class="drag-handle">⠿</span>
-        <span style="flex:1">${formatNoteText(n.text)}</span>
+        <span class="rich-content" style="flex:1">${renderRichText(n.text)}</span>
+        <button class="note-edit" data-action="edit-note">✏️</button>
         <button class="note-del" data-action="delete-note">✕</button>
       </div>
-      <div style="font-size:11px;color:var(--text-dim);margin-top:4px">${timeAgo(n.createdAt)}</div>
+      <div class="card-meta" style="margin-top:4px">
+        ${urgencyBadgeHTML(n)}
+        <span style="font-size:11px;color:var(--text-dim)">${timeAgo(n.createdAt)}</span>
+      </div>
     </div>
   `).join("");
   list.onclick = async (e) => {
+    const card = e.target.closest(".card");
+    if (!card) return;
+    const id = card.dataset.id;
     if (e.target.dataset.action === "delete-note") {
-      const id = e.target.closest(".card").dataset.id;
       const ok = await confirmDialog("מחיקת הערה", "למחוק את ההערה?", "מחיקה");
       if (ok) { Store.deleteGeneralNote(id); renderGeneralNotes(); }
+      return;
+    }
+    if (e.target.dataset.action === "edit-note") {
+      openEditGeneralNoteForm(id);
     }
   };
+}
+function openEditGeneralNoteForm(id) {
+  const n = Store.data.generalNotes.find((x) => x.id === id);
+  if (!n) return;
+  openSheet(`
+    <h3>עריכת הערה</h3>
+    <div class="field">
+      <label>תוכן ההערה</label>
+      ${richEditorHTML("en-text", "", n.text)}
+    </div>
+    ${urgencyFieldHTML("en-urgency", n.urgency)}
+    <button class="btn-primary" id="en-save">שמירה</button>
+  `);
+  $("#en-save").addEventListener("click", () => {
+    const text = getRichValue("en-text");
+    if (!text) { toast("צריך להזין תוכן"); return; }
+    Store.updateGeneralNote(id, { text, urgency: readUrgencyField("en-urgency") });
+    closeSheet();
+    renderGeneralNotes();
+    toast("נשמר");
+  });
 }
 enableLongPressReorder($("#general-notes-list"), "[data-reorder-item]", (ids) => {
   Store.reorderGeneralNotes(ids);
@@ -1626,19 +1797,28 @@ enableLongPressReorder($("#general-notes-list"), "[data-reorder-item]", (ids) =>
   renderGeneralNotes();
 });
 $("#general-notes-sort-btn").addEventListener("click", (e) => {
-  openSortMenu(e.currentTarget, state.generalNotesSort, [
+  const options = [
     { value: "manual", label: "סדר ידני (גרירה)" },
     { value: "created", label: "לפי תאריך יצירה (חדש קודם)" },
-  ], (val) => { state.generalNotesSort = val; Store.setUiPref("generalNotesSort", val); renderGeneralNotes(); });
+    { value: "urgencyNum", label: urgencySortLabel(state.generalNotesUrgencyDir) },
+  ];
+  openSortMenu(e.currentTarget, state.generalNotesSort, options, (val) => {
+    if (val === "urgencyNum") {
+      state.generalNotesUrgencyDir = (state.generalNotesSort === "urgencyNum" && state.generalNotesUrgencyDir === "asc") ? "desc" : "asc";
+      Store.setUiPref("generalNotesUrgencyDir", state.generalNotesUrgencyDir);
+    }
+    state.generalNotesSort = val; Store.setUiPref("generalNotesSort", val); renderGeneralNotes();
+  });
 });
+$("#general-note-input-wrap").innerHTML = richEditorHTML("general-note-input", "הערה חדשה...", "");
 $("#general-note-add").addEventListener("click", () => {
-  const input = $("#general-note-input");
-  const text = input.value.trim();
+  const text = getRichValue("general-note-input");
   if (!text) return;
-  Store.addGeneralNote(text);
-  input.value = "";
-  input.style.height = "auto";
-  updateNotePreview(input);
+  const urgency = readUrgencyField("general-note-urgency");
+  Store.addGeneralNote(text, urgency);
+  $("#general-note-input").innerHTML = "";
+  const uInput = $("#general-note-urgency");
+  if (uInput) uInput.value = "";
   renderGeneralNotes();
   toast("הערה נוספה");
 });
@@ -1837,14 +2017,14 @@ function runSearch(query) {
   };
   const groups = [];
 
-  const taskMatches = Store.data.tasks.filter((t) => matchAll([t.title, t.type, locationLabel(t) || "", ...t.notes.map((n) => n.text)]));
-  if (taskMatches.length) groups.push({ title: "משימות", icon: "✅", items: taskMatches.map((t) => ({ title: t.title, sub: [t.type, locationLabel(t)].filter(Boolean).join(" · "), action: () => openTaskForm(t.id) })) });
+  const taskMatches = Store.data.tasks.filter((t) => matchAll([stripRichText(t.title), t.type, locationLabel(t) || "", ...t.notes.map((n) => n.text)]));
+  if (taskMatches.length) groups.push({ title: "משימות", icon: "✅", items: taskMatches.map((t) => ({ title: stripRichText(t.title), sub: [t.type, locationLabel(t)].filter(Boolean).join(" · "), action: () => openTaskForm(t.id) })) });
 
-  const orderMatches = Store.data.orders.filter((o) => matchAll([o.title, o.category, o.notes || "", locationLabel(o) || ""]));
-  if (orderMatches.length) groups.push({ title: "הזמנות", icon: "📦", items: orderMatches.map((o) => ({ title: o.title, sub: [o.category, locationLabel(o)].filter(Boolean).join(" · "), action: () => openOrderForm(o.id) })) });
+  const orderMatches = Store.data.orders.filter((o) => matchAll([stripRichText(o.title), o.category, stripRichText(o.notes) || "", locationLabel(o) || ""]));
+  if (orderMatches.length) groups.push({ title: "הזמנות", icon: "📦", items: orderMatches.map((o) => ({ title: stripRichText(o.title), sub: [o.category, locationLabel(o)].filter(Boolean).join(" · "), action: () => openOrderForm(o.id) })) });
 
-  const qMatches = Store.data.questions.filter((q) => matchAll([q.text, q.relatedTo || "", q.answer || ""]));
-  if (qMatches.length) groups.push({ title: "שאלות ובעיות", icon: "❓", items: qMatches.map((q) => ({ title: q.text, sub: q.relatedTo || (q.answer ? "נענה" : "פתוח"), action: () => openQuestionForm(q.id) })) });
+  const qMatches = Store.data.questions.filter((q) => matchAll([stripRichText(q.text), q.relatedTo || "", stripRichText(q.answer) || ""]));
+  if (qMatches.length) groups.push({ title: "שאלות ובעיות", icon: "❓", items: qMatches.map((q) => ({ title: stripRichText(q.text), sub: q.relatedTo || (q.answer ? "נענה" : "פתוח"), action: () => openQuestionForm(q.id) })) });
 
   const buildingMatches = [];
   Store.data.buildings.forEach((b) => {
@@ -1855,15 +2035,15 @@ function runSearch(query) {
   });
   if (buildingMatches.length) groups.push({ title: "בניינים וקומות", icon: "🏢", items: buildingMatches });
 
-  const locNoteMatches = Store.data.locationNotes.filter((n) => matchAll([n.text]));
+  const locNoteMatches = Store.data.locationNotes.filter((n) => matchAll([stripRichText(n.text)]));
   if (locNoteMatches.length) groups.push({ title: "הערות מיקום", icon: "📍", items: locNoteMatches.map((n) => {
     const b = Store.data.buildings.find((x) => x.id === n.buildingId);
     const label = b ? (n.floorId ? `${b.name} · ${floorName(b.id, n.floorId)}` : b.name) : "";
-    return { title: n.text, sub: label, action: () => openLocationDetail(n.buildingId, n.floorId) };
+    return { title: stripRichText(n.text), sub: label, action: () => openLocationDetail(n.buildingId, n.floorId) };
   }) });
 
-  const genNoteMatches = Store.data.generalNotes.filter((n) => matchAll([n.text]));
-  if (genNoteMatches.length) groups.push({ title: "הערות כלליות", icon: "🗒️", items: genNoteMatches.map((n) => ({ title: n.text, sub: timeAgo(n.createdAt), action: () => switchView("more") })) });
+  const genNoteMatches = Store.data.generalNotes.filter((n) => matchAll([stripRichText(n.text)]));
+  if (genNoteMatches.length) groups.push({ title: "הערות כלליות", icon: "🗒️", items: genNoteMatches.map((n) => ({ title: stripRichText(n.text), sub: timeAgo(n.createdAt), action: () => switchView("more") })) });
 
   return { groups, terms };
 }

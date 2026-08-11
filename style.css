@@ -255,6 +255,10 @@ main {
 .note-del {
   background: none; border: none; color: var(--red); cursor: pointer; font-size: 14px; padding: 0 4px;
 }
+.note-edit {
+  background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 13px; padding: 0 4px;
+}
+.tag.urgency-num { color: var(--red); background: var(--red-tint); border-color: var(--red-tint); font-weight: 700; }
 
 .card-actions {
   display: flex;
@@ -356,6 +360,21 @@ main {
 }
 .building-head .arrow { transition: transform 0.15s; color: var(--text-dim); }
 .building-block.open .arrow { transform: rotate(180deg); }
+.building-order-btns { display: flex; gap: 4px; margin-inline-start: 8px; }
+.building-order-btns .order-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 12px;
+  width: 26px;
+  height: 26px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.building-order-btns .order-btn:active { background: var(--amber-tint); }
+.building-order-btns .order-btn:disabled { opacity: 0.3; cursor: default; }
 .floor-list {
   display: none;
   padding: 0 14px 12px;
@@ -582,22 +601,17 @@ input:focus, textarea:focus, select:focus {
   box-shadow: var(--shadow-sm);
 }
 
-.note-preview {
-  margin-top: 6px;
-  padding: 8px 10px;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-sm);
-  font-size: 13.5px;
-  color: var(--text);
-  background: var(--surface-2);
-}
-.note-preview ul, .note-preview ol { margin: 4px 0; }
-.note-toolbar {
+/* Rich text editor: real inline formatting (bold/italic/lists/alignment/colors) applied
+   directly to the text via a contenteditable div, the same way a word processor works —
+   no separate raw-markup + preview-underneath split. */
+.rich-toolbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin-top: 10px;
+  margin-bottom: 6px;
 }
-.note-toolbar button {
+.rich-toolbar button {
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -605,8 +619,56 @@ input:focus, textarea:focus, select:focus {
   font-size: 13px;
   color: var(--text);
   cursor: pointer;
+  min-width: 34px;
 }
-.note-toolbar button:active { background: var(--amber-tint); }
+.rich-toolbar button:active { background: var(--amber-tint); }
+.rich-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 2px; }
+.rich-color-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 32px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  cursor: pointer;
+  overflow: hidden;
+}
+.rich-color-btn.rich-color-bg { text-shadow: 0 0 3px var(--surface-2); }
+.rich-color-btn input[type="color"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  border: none;
+  padding: 0;
+}
+.rich-editor {
+  min-height: 44px;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 15px;
+  line-height: 1.45;
+  direction: rtl;
+}
+.rich-editor:focus { outline: 2px solid var(--amber); outline-offset: 1px; }
+.rich-editor:empty:before {
+  content: attr(data-placeholder);
+  color: var(--text-dim);
+}
+.rich-editor ul, .rich-editor ol,
+.rich-content ul, .rich-content ol { margin: 4px 0; padding-inline-start: 20px; }
+.rich-content { white-space: normal; }
 .inline-add {
   display: flex;
   gap: 8px;
@@ -614,15 +676,11 @@ input:focus, textarea:focus, select:focus {
   align-items: flex-start;
 }
 .inline-add input { flex: 1; }
-.autogrow-textarea {
-  flex: 1;
-  resize: none;
-  overflow: hidden;
-  min-height: 40px;
-  max-height: 200px;
-  line-height: 1.4;
-  white-space: pre-wrap;
-  word-break: break-word;
+.inline-add input.urgency-input {
+  flex: 0 0 64px;
+  width: 64px;
+  text-align: center;
+  padding: 10px 6px;
 }
 .inline-add button {
   background: var(--amber);

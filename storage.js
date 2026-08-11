@@ -38,7 +38,6 @@ function defaultData() {
       ordersSort: "default",
       questionsSort: "default",
       buildingsSort: "default",
-      tasksDateOrder: "desc", // "desc" = newest first (default), "asc" = oldest first
     },
   };
 }
@@ -116,6 +115,18 @@ const Store = {
   reorderQuestions(ids) { this.reorderList(this.data.questions, ids); },
   reorderGeneralNotes(ids) { this.reorderList(this.data.generalNotes, ids); },
   reorderBuildings(ids) { this.reorderList(this.data.buildings, ids); },
+  // Swap a building's position with its immediate neighbor (dir: -1 = up, +1 = down).
+  // Simple, guaranteed-reliable alternative to drag-and-drop for reordering buildings.
+  moveBuilding(id, dir) {
+    const arr = [...this.data.buildings].sort((a, b) => a.order - b.order);
+    const idx = arr.findIndex((x) => x.id === id);
+    if (idx === -1) return;
+    const swapIdx = idx + dir;
+    if (swapIdx < 0 || swapIdx >= arr.length) return;
+    const a = arr[idx], b = arr[swapIdx];
+    const tmp = a.order; a.order = b.order; b.order = tmp;
+    this.persist();
+  },
   reorderFloors(buildingId, ids) {
     const b = this.data.buildings.find((x) => x.id === buildingId);
     if (!b) return;
@@ -186,9 +197,9 @@ const Store = {
       .filter((n) => n.buildingId === buildingId && (n.floorId || null) === (floorId || null))
       .sort((a, b) => a.order - b.order);
   },
-  addLocationNote(buildingId, floorId, text) {
+  addLocationNote(buildingId, floorId, text, urgency = null) {
     const scoped = this.getLocationNotes(buildingId, floorId);
-    const n = { id: uid(), buildingId, floorId: floorId || null, text, createdAt: Date.now(), order: nextOrder(scoped) };
+    const n = { id: uid(), buildingId, floorId: floorId || null, text, urgency, createdAt: Date.now(), order: nextOrder(scoped) };
     this.data.locationNotes.push(n);
     this.persist();
     return n;
@@ -272,6 +283,7 @@ const Store = {
       hold: false,
       dueAt: null,
       reminder: null,
+      urgency: null, // optional numeric urgency rank; lower = more urgent
       ...task,
     };
     this.data.tasks.unshift(t);
@@ -389,11 +401,16 @@ const Store = {
   },
 
   // ---------- General notes ----------
-  addGeneralNote(text) {
-    const n = { id: uid(), text, createdAt: Date.now(), order: nextOrder(this.data.generalNotes) };
+  addGeneralNote(text, urgency = null) {
+    const n = { id: uid(), text, urgency, createdAt: Date.now(), order: nextOrder(this.data.generalNotes) };
     this.data.generalNotes.unshift(n);
     this.persist();
     return n;
+  },
+  updateGeneralNote(id, patch) {
+    const n = this.data.generalNotes.find((x) => x.id === id);
+    if (n) Object.assign(n, patch);
+    this.persist();
   },
   deleteGeneralNote(id) {
     this.data.generalNotes = this.data.generalNotes.filter((x) => x.id !== id);
