@@ -1,5 +1,5 @@
 // app.js — ניווט, רינדור, וטיפול באירועים
-const APP_VERSION = "2.2.0";
+const APP_VERSION = "2.3.0";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -87,6 +87,9 @@ function stripRichText(raw) {
 function richEditorHTML(id, placeholder, html) {
   return `
     <div class="rich-toolbar" data-target="${id}">
+      <button type="button" data-fmt="undo" title="ביטול פעולה (חזרה אחורה)">↺</button>
+      <button type="button" data-fmt="redo" title="ביצוע שוב (חזרה קדימה)">↻</button>
+      <span class="rich-sep"></span>
       <button type="button" data-fmt="bold" title="הדגשה"><b>B</b></button>
       <button type="button" data-fmt="italic" title="נטוי"><i>I</i></button>
       <span class="rich-sep"></span>
@@ -122,6 +125,53 @@ const RICH_TOOLBAR_COMMANDS = {
   bullet: "insertUnorderedList", number: "insertOrderedList",
   alignRight: "justifyRight", alignCenter: "justifyCenter", alignLeft: "justifyLeft",
 };
+
+// ==========================================================
+// Undo/redo history for rich-editors — real Ctrl+Z/Ctrl+Y behavior, but as visible
+// buttons, since a phone keyboard has no Ctrl key. Typing a word and tapping ↺ removes
+// it, tapping ↻ brings it back — same for formatting, bullet lists, etc. Each editor
+// element gets its own independent history (keyed by the live DOM element, so a fresh
+// sheet/form always starts with a clean history).
+// ==========================================================
+const richHistory = new WeakMap();
+function richHistoryEnsure(el) {
+  let h = richHistory.get(el);
+  if (!h) { h = { stack: [el.innerHTML], idx: 0 }; richHistory.set(el, h); }
+  return h;
+}
+function richHistoryPush(el) {
+  const h = richHistoryEnsure(el);
+  const html = el.innerHTML;
+  if (h.stack[h.idx] === html) return;
+  h.stack = h.stack.slice(0, h.idx + 1);
+  h.stack.push(html);
+  if (h.stack.length > 80) h.stack.shift();
+  h.idx = h.stack.length - 1;
+}
+function placeCaretAtEnd(el) {
+  el.focus();
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  range.collapse(false);
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+function richUndo(el) {
+  const h = richHistoryEnsure(el);
+  if (h.idx <= 0) return;
+  h.idx--;
+  el.innerHTML = h.stack[h.idx];
+  placeCaretAtEnd(el);
+}
+function richRedo(el) {
+  const h = richHistoryEnsure(el);
+  if (h.idx >= h.stack.length - 1) return;
+  h.idx++;
+  el.innerHTML = h.stack[h.idx];
+  placeCaretAtEnd(el);
+}
+
 // Prevent toolbar buttons from stealing focus/selection away from the editor before we
 // run execCommand — otherwise the selection collapses and formatting has nothing to apply to.
 document.addEventListener("mousedown", (e) => {
@@ -133,11 +183,15 @@ document.addEventListener("click", (e) => {
   const toolbar = btn.closest(".rich-toolbar");
   const el = document.getElementById(toolbar.dataset.target);
   if (!el) return;
+  const fmt = btn.dataset.fmt;
+  if (fmt === "undo") { richUndo(el); return; }
+  if (fmt === "redo") { richRedo(el); return; }
   el.focus();
   ensureRichStyleWithCSS();
-  const fmt = btn.dataset.fmt;
+  richHistoryEnsure(el);
   if (RICH_TOOLBAR_COMMANDS[fmt]) document.execCommand(RICH_TOOLBAR_COMMANDS[fmt], false, null);
   else if (fmt === "clear") document.execCommand("removeFormat", false, null);
+  richHistoryPush(el);
 });
 document.addEventListener("input", (e) => {
   const input = e.target;
@@ -148,7 +202,26 @@ document.addEventListener("input", (e) => {
     el.focus();
     ensureRichStyleWithCSS();
     document.execCommand(input.dataset.fmt === "color" ? "foreColor" : "hiliteColor", false, input.value);
+    richHistoryPush(el);
   }
+});
+// Plain typing: push a history snapshot a short moment after the user pauses, so every
+// undo step corresponds to a natural chunk of typing rather than every single keystroke.
+document.addEventListener("input", (e) => {
+  const el = e.target;
+  if (!el.classList || !el.classList.contains("rich-editor")) return;
+  richHistoryEnsure(el);
+  clearTimeout(el._historyTimer);
+  el._historyTimer = setTimeout(() => richHistoryPush(el), 400);
+});
+// Desktop bonus: real Ctrl+Z / Ctrl+Y (or Cmd+Z / Cmd+Shift+Z on Mac) also work while
+// focused inside a rich-editor, on top of the ↺ / ↻ buttons.
+document.addEventListener("keydown", (e) => {
+  const el = document.activeElement;
+  if (!el || !el.classList || !el.classList.contains("rich-editor")) return;
+  const key = e.key.toLowerCase();
+  if ((e.ctrlKey || e.metaKey) && key === "z" && !e.shiftKey) { e.preventDefault(); richUndo(el); }
+  else if ((e.ctrlKey || e.metaKey) && (key === "y" || (key === "z" && e.shiftKey))) { e.preventDefault(); richRedo(el); }
 });
 
 // ---------------- Legacy plain-text/markdown renderer (kept only for notes saved by an
@@ -312,6 +385,11 @@ function openSheet(html) {
   $("#sheet-content").innerHTML = html;
   $("#sheet").classList.add("show");
   $("#sheet-backdrop").classList.add("show");
+  // The sheet element is reused between opens — without this, a sheet that was
+  // scrolled down last time (e.g. to reach "שמירה" at the bottom of a long form)
+  // stays scrolled down the next time it opens too, hiding the text box at the top
+  // and forcing an extra scroll before the user can even start typing.
+  $("#sheet").scrollTop = 0;
   if (!alreadyOpen) pushBackable(closeSheet);
 }
 function closeSheet() {
@@ -689,9 +767,20 @@ function compareUrgency(a, b, dir) {
   if (bv === null) return -1;
   return dir === "asc" ? av - bv : bv - av;
 }
+// Cyclical color coding by urgency number (1=red, 2=orange, 3=amber, 4=blue, 5=green,
+// 6=purple, then repeats). Lets the eye tell urgency levels apart at a glance in a list,
+// without reading the number itself. Can be switched off in settings ("תצוגה").
+function urgencyColorClass(item) {
+  if (Store.data.uiPrefs.urgencyColorsEnabled === false) return "";
+  const v = urgencyVal(item);
+  if (v === null || v < 1) return "";
+  return "urgency-color-" + (((v - 1) % 6) + 1);
+}
 function urgencyBadgeHTML(item) {
   const v = urgencyVal(item);
-  return v === null ? "" : `<span class="tag urgency-num">🔢 ${esc(String(v))}</span>`;
+  if (v === null) return "";
+  const colorClass = urgencyColorClass(item);
+  return `<span class="tag urgency-num ${colorClass}">🔢 ${esc(String(v))}</span>`;
 }
 function urgencyFieldHTML(id, value) {
   return `
@@ -779,7 +868,7 @@ function renderTasks() {
     const budget = buildingBudgetFor(t) || t.budgetCode;
     const urgency = taskUrgency(t);
     return `
-    <div class="card ${t.status === "done" ? "done" : ""} ${urgency ? "urgency-" + urgency : ""}" data-id="${t.id}" data-reorder-item>
+    <div class="card ${t.status === "done" ? "done" : ""} ${urgency ? "urgency-" + urgency : ""} ${urgencyColorClass(t)}" data-id="${t.id}" data-reorder-item>
       <div class="card-top">
         <span class="drag-handle">⠿</span>
         <div class="status-dot ${t.status}" data-action="cycle-status"></div>
@@ -988,7 +1077,7 @@ function urlBase64ToUint8Array(base64String) {
   for (let i = 0; i < rawData.length; i++) out[i] = rawData.charCodeAt(i);
   return out;
 }
-async function subscribeToPush() {
+async function subscribeToPush(silent = false) {
   if (!window.CloudSync || !window.CloudSync.enabled) return;
   if (!window.CLOUD_VAPID_PUBLIC_KEY || window.CLOUD_VAPID_PUBLIC_KEY === "YOUR_VAPID_PUBLIC_KEY") return;
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
@@ -1001,8 +1090,12 @@ async function subscribeToPush() {
         applicationServerKey: urlBase64ToUint8Array(window.CLOUD_VAPID_PUBLIC_KEY),
       });
     }
+    // Re-saving even an already-existing subscription is cheap and harmless (setDoc just
+    // overwrites) — it's a safety net in case the Firestore copy was ever lost/out of sync
+    // with what the browser actually holds, which is the main way "reminders stopped
+    // working when the app is closed" silently happens over time.
     await window.CloudSync.saveSubscription(sub);
-    toast("תזכורות בענן חוברו למכשיר הזה ✓");
+    if (!silent) toast("תזכורות בענן חוברו למכשיר הזה ✓");
   } catch (e) {
     console.error("push subscribe failed", e);
   }
@@ -1474,7 +1567,7 @@ function locationDetailHTML(buildingId, floorId) {
       </div>
       <div id="loc-notes-list">
         ${notes.length ? notes.map((n) => `
-          <div class="loc-mini-card" data-id="${n.id}" data-reorder-item>
+          <div class="loc-mini-card ${urgencyColorClass(n)}" data-id="${n.id}" data-reorder-item>
             <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
               <span class="drag-handle">⠿</span>
               <span class="rich-content" style="flex:1">${renderRichText(n.text)}</span>
@@ -1743,7 +1836,7 @@ function renderGeneralNotes() {
   });
   if (!items.length) { list.innerHTML = `<div class="empty-state" style="padding:20px"><p>אין הערות כלליות.</p></div>`; return; }
   list.innerHTML = items.map((n) => `
-    <div class="card" data-id="${n.id}" data-reorder-item style="padding:12px">
+    <div class="card ${urgencyColorClass(n)}" data-id="${n.id}" data-reorder-item style="padding:12px">
       <div class="note-line" style="font-size:14px;color:var(--text)">
         <span class="drag-handle">⠿</span>
         <span class="rich-content" style="flex:1">${renderRichText(n.text)}</span>
@@ -1836,6 +1929,15 @@ function categoryManagerHTML(title, items) {
     </div>
   `;
 }
+// ---------------- Settings: urgency color-coding toggle ----------------
+const urgencyColorsToggle = $("#urgency-colors-toggle");
+urgencyColorsToggle.checked = Store.data.uiPrefs.urgencyColorsEnabled !== false;
+urgencyColorsToggle.addEventListener("change", () => {
+  Store.setUiPref("urgencyColorsEnabled", urgencyColorsToggle.checked);
+  renderAll();
+  toast(urgencyColorsToggle.checked ? "צביעת דחיפות הופעלה" : "צביעת דחיפות בוטלה");
+});
+
 $("#manage-task-types").addEventListener("click", () => {
   openSheet(categoryManagerHTML("סוגי משימות", Store.data.taskTypes));
   wireCategoryManager(() => Store.data.taskTypes, (v) => Store.addTaskType(v), (v, mode) => Store.deleteTaskType(v, mode), (v) => Store.usageOfTaskType(v), "סוגי משימות");
@@ -1968,7 +2070,7 @@ function updateCloudStatusLabel() {
 window.addEventListener("cloud-status", updateCloudStatusLabel);
 window.addEventListener("cloud-ready", () => {
   updateCloudStatusLabel();
-  if ("Notification" in window && Notification.permission === "granted") subscribeToPush();
+  if ("Notification" in window && Notification.permission === "granted") subscribeToPush(true);
 });
 $("#cloud-status-row").addEventListener("click", async () => {
   if (window.CloudSync && window.CloudSync.status === "error") {
@@ -1999,20 +2101,46 @@ $("#fab-add").addEventListener("click", () => {
 // ==========================================================
 // Smart search — live results across everything, in a sheet
 // ==========================================================
+// ==========================================================
+// Hebrew-aware normalization for search — so "מילה"/"מלה", "תוכנית"/"תכנית" and
+// "דו״ח"/"דוח" (with or without gershayim/apostrophes) are all treated as the same word,
+// and searching part of a word still finds it.
+// ==========================================================
+const HEB_FINAL_MAP = { "ך": "כ", "ם": "מ", "ן": "נ", "ף": "פ", "ץ": "צ" };
+function hebNormalize(s) {
+  return (s || "")
+    .toString()
+    .toLowerCase()
+    .replace(/[\u0591-\u05C7]/g, "") // niqqud / cantillation marks
+    .replace(/["'׳״]/g, "") // gershayim/geresh/quotes: דו"ח <-> דוח, ה' <-> ה
+    .replace(/[ךםןףץ]/g, (c) => HEB_FINAL_MAP[c]) // sofit -> regular letter
+    .replace(/(?<=\S)[וי]/g, "") // drop internal ו/י (plene/defective spelling): מילה<->מלה, תוכנית<->תכנית
+    .replace(/\s+/g, " ")
+    .trim();
+}
+// Builds a lenient regex for highlighting: matches the term in the *original* (un-normalized)
+// text even when it has extra/missing ו,י or quote marks compared to what was typed.
+function hebLooseRegex(term) {
+  const optional = `["'׳״וי]{0,2}`;
+  const body = [...term]
+    .map((ch) => ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join(optional);
+  try { return new RegExp(`(${body}${optional})`, "gi"); } catch (e) { return null; }
+}
 function highlight(text, terms) {
   let out = esc(text || "");
   terms.forEach((t) => {
     if (!t) return;
-    const re = new RegExp(`(${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi");
+    const re = hebLooseRegex(t) || new RegExp(`(${t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi");
     out = out.replace(re, "<mark>$1</mark>");
   });
   return out;
 }
 function runSearch(query) {
-  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean).map(hebNormalize).filter(Boolean);
   if (!terms.length) return null;
   const matchAll = (fields) => {
-    const hay = fields.join(" ").toLowerCase();
+    const hay = hebNormalize(fields.join(" "));
     return terms.every((t) => hay.includes(t));
   };
   const groups = [];
@@ -2085,6 +2213,29 @@ function openSearchSheet() {
   render();
 }
 $("#search-btn").addEventListener("click", openSearchSheet);
+
+// ==========================================================
+// Floating quick-search pill — appears while scrolling back up through a long list
+// (without needing to reach the very top), so search is always one tap away.
+// ==========================================================
+(() => {
+  const fab = $("#quick-search-fab");
+  let lastY = window.scrollY;
+  fab.addEventListener("click", openSearchSheet);
+  window.addEventListener("scroll", () => {
+    const y = window.scrollY;
+    const scrollingUp = y < lastY - 4;
+    const scrollingDown = y > lastY + 4;
+    if (y < 80) {
+      fab.classList.remove("show"); // header/search button already visible near the top
+    } else if (scrollingUp) {
+      fab.classList.add("show");
+    } else if (scrollingDown) {
+      fab.classList.remove("show");
+    }
+    lastY = y;
+  }, { passive: true });
+})();
 
 // ==========================================================
 // Reminder engine — checks due tasks, fires notifications, tints urgent banner
@@ -2221,4 +2372,20 @@ $("#update-btn").addEventListener("click", () => {
 renderAll();
 checkReminders();
 setInterval(checkReminders, 20000);
-document.addEventListener("visibilitychange", () => { if (!document.hidden) checkReminders(); });
+// Every time the app comes back to the foreground, re-verify (and if needed re-save) the
+// push subscription — this is the main safety net against "reminders quietly stopped
+// working when the app is closed" over time (an OS/browser can silently invalidate a push
+// subscription; without this it would only get noticed/fixed the next time the person
+// happens to open Settings and tap the cloud reminders row). Throttled to once per hour
+// so it doesn't hammer Firestore on every tab switch.
+let lastPushRecheck = 0;
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  checkReminders();
+  const now = Date.now();
+  if (now - lastPushRecheck < 3600000) return;
+  lastPushRecheck = now;
+  if ("Notification" in window && Notification.permission === "granted" && window.CloudSync && window.CloudSync.enabled) {
+    subscribeToPush(true);
+  }
+});

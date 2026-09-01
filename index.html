@@ -24,6 +24,7 @@
 </div>
 
 <div id="urgent-banner" class="urgent-banner"></div>
+<button class="quick-search-fab" id="quick-search-fab">🔍 חיפוש</button>
 
 <header class="topbar">
   <div class="brand">
@@ -135,6 +136,18 @@
       </div>
     </div>
     <p class="hint-text">כדי שתזכורות יתריעו גם כשהאפליקציה סגורה לגמרי, יש להגדיר חיבור לענן חינמי (Firebase + GitHub Actions) — ראה קובץ SETUP-CLOUD.md שצורף לאפליקציה. בלי ההגדרה הזו, תזכורות יעבדו רק כשהאפליקציה פתוחה/ברקע.</p>
+
+    <div class="section-title">תצוגה</div>
+    <div class="settings-group">
+      <div class="switch-row">
+        <span>צביעת רשימות לפי מספר דחיפות</span>
+        <label class="switch">
+          <input type="checkbox" id="urgency-colors-toggle">
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+    <p class="hint-text">כשמופעל, לכל פריט עם מספר דחיפות (1, 2, 3...) תתווסף אוטומטית מסגרת צבעונית בצד — 1 באדום, וכל מספר בצבע אחר — כדי שההבדל בדחיפות יבלוט מיד ברשימה.</p>
 
     <div class="section-title">ניהול קטגוריות</div>
     <div class="settings-group">
