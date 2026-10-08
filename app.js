@@ -1,5 +1,5 @@
 // app.js — ניווט, רינדור, וטיפול באירועים
-const APP_VERSION = "2.3.0";
+const APP_VERSION = "2.4.0";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -2009,14 +2009,7 @@ $("#import-file-input").addEventListener("change", (e) => {
     try {
       const ok = await confirmDialog("ייבוא גיבוי", "ייבוא הגיבוי יחליף את כל הנתונים הקיימים במכשיר זה. להמשיך?", "ייבוא");
       if (!ok) return;
-      Store.importJSON(reader.result);
-      Object.assign(state, {
-        tasksSort: Store.data.uiPrefs.tasksSort,
-        ordersSort: Store.data.uiPrefs.ordersSort,
-        questionsSort: Store.data.uiPrefs.questionsSort,
-        buildingsSort: Store.data.uiPrefs.buildingsSort,
-      });
-      renderAll();
+      applyImportedJSON(reader.result);
       toast("הנתונים שוחזרו בהצלחה");
     } catch (err) {
       toast("קובץ לא תקין");
@@ -2034,6 +2027,259 @@ $("#wipe-data").addEventListener("click", async () => {
   renderAll();
   toast("כל הנתונים נמחקו");
 });
+
+
+// ==========================================================
+// Cloud backup (Google account) — automatic, free (Firebase Spark plan, no credit card)
+// ==========================================================
+function applyImportedJSON(json) {
+  Store.importJSON(json);
+  Object.assign(state, {
+    tasksSort: Store.data.uiPrefs.tasksSort,
+    ordersSort: Store.data.uiPrefs.ordersSort,
+    questionsSort: Store.data.uiPrefs.questionsSort,
+    buildingsSort: Store.data.uiPrefs.buildingsSort,
+  });
+  renderAll();
+}
+
+const fmtDateTime = (ts) => ts ? new Date(ts).toLocaleString("he-IL", { dateStyle: "short", timeStyle: "short" }) : "—";
+const fmtCounts = (c) => c ? `${c.tasks || 0} משימות · ${c.orders || 0} הזמנות · ${c.buildings || 0} בניינים · ${c.questions || 0} שאלות` : "";
+const localDayId = () => { const d = new Date(); const p = (n) => String(n).padStart(2, "0"); return `day-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
+const lsGet = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } };
+
+const Backup = {
+  reconciled: false,   // לא מעלים לענן לפני שבדקנו מה כבר יש שם
+  reconciling: false,
+  timer: null,
+  busy: false,
+  lastPushedJson: null,
+  lastError: "",
+  pruned: false,
+
+  cloud() { return window.CloudSync; },
+  signedIn() { const c = this.cloud(); return !!(c && c.enabled && c.isGoogle); },
+  lastAt() { return Number(lsGet("elec_last_backup_at")) || 0; },
+
+  schedule() {
+    if (!this.signedIn() || !this.reconciled) return;
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.push(), 4000);
+  },
+  flush() {
+    if (this.timer) { clearTimeout(this.timer); this.timer = null; this.push(); }
+  },
+
+  async push(force = false) {
+    if (!this.signedIn() || !this.reconciled || this.busy) return false;
+    // הגנה: לעולם לא דורסים גיבוי בנתונים ריקים (למשל אחרי מחיקת נתוני אתר)
+    if (!Store.hasContent()) { this.lastError = ""; return false; }
+    const json = JSON.stringify(Store.data);
+    if (!force && json === this.lastPushedJson) return true;
+    this.busy = true;
+    try {
+      const counts = Store.counts();
+      await this.cloud().putBackup("latest", json, counts);
+      await this.cloud().putBackup(localDayId(), json, counts);
+      this.lastPushedJson = json;
+      lsSet("elec_last_backup_at", String(Date.now()));
+      this.lastError = "";
+      this.pruneOld();
+      return true;
+    } catch (e) {
+      this.lastError = (e && (e.code || e.message)) || String(e);
+      console.error("[backup] push failed:", e);
+      return false;
+    } finally {
+      this.busy = false;
+      updateBackupLabel();
+    }
+  },
+
+  // שומר רק 14 גיבויים יומיים אחרונים
+  async pruneOld() {
+    if (this.pruned) return;
+    this.pruned = true;
+    try {
+      const list = await this.cloud().listBackups();
+      const days = list.filter((b) => b.id.startsWith("day-")).sort((a, b) => b.id.localeCompare(a.id));
+      for (const b of days.slice(14)) await this.cloud().deleteBackup(b.id);
+    } catch (e) { /* לא קריטי */ }
+  },
+
+  // נקרא מיד אחרי התחברות/פתיחת האפליקציה עם משתמש Google
+  async reconcile() {
+    if (this.reconciled || this.reconciling || !this.signedIn()) return;
+    this.reconciling = true;
+    try {
+      const cloud = await this.cloud().getBackup("latest");
+      const localHas = Store.hasContent();
+      if (!cloud) {
+        this.reconciled = true;
+        if (localHas) this.push(true);
+        return;
+      }
+      const same = cloud.json === JSON.stringify(Store.data);
+      if (!localHas) {
+        const ok = await confirmDialog("נמצא גיבוי בענן",
+          `המכשיר הזה ריק, אבל בענן יש גיבוי מ-${fmtDateTime(cloud.savedAt)}\n(${fmtCounts(cloud.counts)}).\n\nלשחזר אותו עכשיו?`, "שחזר", false);
+        if (ok) { applyImportedJSON(cloud.json); this.lastPushedJson = cloud.json; lsSet("elec_last_backup_at", String(Date.now())); toast("הנתונים שוחזרו מהענן"); }
+        this.reconciled = true;
+        return;
+      }
+      if (!same && cloud.savedAt > this.lastAt()) {
+        // בענן יש גרסה חדשה יותר ממה שהמכשיר הזה גיבה לאחרונה (למשל עבודה ממכשיר אחר)
+        const choice = await chooseDialog("גיבוי חדש יותר בענן",
+          `בענן יש גיבוי מ-${fmtDateTime(cloud.savedAt)} (${fmtCounts(cloud.counts)}) שחדש מהגיבוי האחרון של המכשיר הזה.\n\nמה לעשות?`,
+          [
+            { label: "השאר את הנתונים במכשיר", value: "local", style: "ghost" },
+            { label: "שחזר מהענן", value: "cloud", style: "primary" },
+          ]);
+        if (choice === "cloud") {
+          await this.safetyCopy();
+          applyImportedJSON(cloud.json); this.lastPushedJson = cloud.json; lsSet("elec_last_backup_at", String(Date.now()));
+          toast("הנתונים שוחזרו מהענן");
+          this.reconciled = true;
+          return;
+        }
+        if (choice !== "local") return; // נסגר בלי בחירה — נשאל שוב בפעם הבאה, ובינתיים לא מעלים
+        await this.safetyCopy(cloud.json);
+      }
+      this.reconciled = true;
+      this.push(true);
+    } catch (e) {
+      this.lastError = (e && (e.code || e.message)) || String(e);
+      console.error("[backup] reconcile failed:", e);
+    } finally {
+      this.reconciling = false;
+      updateBackupLabel();
+    }
+  },
+
+  // עותק ביטחון לפני כל פעולה שדורסת נתונים (מקומיים או ענן)
+  async safetyCopy(jsonOverride) {
+    try {
+      const json = jsonOverride || (Store.hasContent() ? JSON.stringify(Store.data) : null);
+      if (json) await this.cloud().putBackup("pre-restore", json, jsonOverride ? {} : Store.counts());
+    } catch (e) { console.error("[backup] safety copy failed:", e); }
+  },
+};
+
+window.addEventListener("store-changed", () => Backup.schedule());
+document.addEventListener("visibilitychange", () => { if (document.hidden) Backup.flush(); });
+window.addEventListener("pagehide", () => Backup.flush());
+
+function updateBackupLabel() {
+  const el = $("#backup-account-label");
+  if (!el) return;
+  const c = window.CloudSync;
+  if (!c || !c.enabled) { el.textContent = "Firebase לא מוגדר"; return; }
+  if (!c.isGoogle) { el.textContent = "לא מחובר — לחץ להתחברות ›"; return; }
+  const email = (c.user && c.user.email) || "";
+  if (Backup.lastError) el.textContent = "⚠️ שגיאה — לחץ לפרטים";
+  else if (!Backup.reconciled) el.textContent = "בודק גיבוי...";
+  else el.textContent = `✅ ${email} · ${Backup.lastAt() ? fmtDateTime(Backup.lastAt()) : "טרם גובה"}`;
+}
+
+window.addEventListener("backup-auth", () => {
+  updateBackupLabel();
+  if (Backup.signedIn()) Backup.reconcile();
+});
+window.addEventListener("cloud-ready", () => {
+  updateBackupLabel();
+  // תזכורת עדינה (לכל היותר פעם ב-3 ימים) כל עוד הגיבוי לענן לא מופעל
+  const c = window.CloudSync;
+  if (c && c.enabled && !c.isGoogle) {
+    const last = Number(lsGet("elec_backup_nag_at")) || 0;
+    if (Date.now() - last > 3 * 86400000) {
+      lsSet("elec_backup_nag_at", String(Date.now()));
+      setTimeout(async () => {
+        if (window.CloudSync.isGoogle) return;
+        const ok = await confirmDialog("גיבוי לענן לא מופעל",
+          "כרגע הנתונים נשמרים רק בטלפון הזה, ומחיקת נתוני אתר בדפדפן תמחק אותם. להפעיל גיבוי אוטומטי חינמי לחשבון Google?", "התחבר עכשיו", false);
+        if (ok) signInForBackup();
+      }, 1500);
+    }
+  }
+});
+
+async function signInForBackup() {
+  try {
+    await window.CloudSync.signInGoogle();
+    toast("מחובר — מתחיל גיבוי");
+  } catch (e) {
+    const code = (e && e.code) || (e && e.message) || String(e);
+    if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") return;
+    let hint = "";
+    if (code === "auth/unauthorized-domain") hint = "\n\nיש להוסיף את הדומיין של האתר (למשל yourname.github.io) ב-Firebase → Authentication → Settings → Authorized domains.";
+    else if (code === "auth/operation-not-allowed") hint = "\n\nיש להפעיל את ספק Google ב-Firebase → Authentication → Sign-in method.";
+    else if (code === "auth/popup-blocked") hint = "\n\nהדפדפן חסם את חלון ההתחברות — יש לאשר חלונות קופצים לאתר ולנסות שוב.";
+    await alertDialog("ההתחברות נכשלה", `${code}${hint}\n\nראה SETUP-BACKUP.md.`);
+  }
+}
+
+$("#backup-account-row").addEventListener("click", async () => {
+  const c = window.CloudSync;
+  if (!c || !c.enabled) { await alertDialog("Firebase לא מוגדר", "ראה SETUP-CLOUD.md ו-SETUP-BACKUP.md."); return; }
+  if (!c.isGoogle) { await signInForBackup(); return; }
+  if (Backup.lastError) {
+    await alertDialog("שגיאת גיבוי", `${Backup.lastError}\n\nהסיבה הנפוצה: חוקי Firestore החדשים (firestore.rules) לא הודבקו ופורסמו. ראה SETUP-BACKUP.md.`);
+  }
+  const choice = await chooseDialog("חשבון גיבוי", `מחובר כ-${(c.user && c.user.email) || ""}`, [
+    { label: "סגור", value: null, style: "ghost" },
+    { label: "התנתק", value: "out", style: "danger" },
+  ]);
+  if (choice === "out") {
+    await c.signOutGoogle();
+    Backup.reconciled = false; Backup.lastPushedJson = null;
+    toast("התנתקת — הגיבוי האוטומטי כבוי");
+    updateBackupLabel();
+  }
+});
+
+$("#backup-now-row").addEventListener("click", async () => {
+  if (!Backup.signedIn()) { toast("יש להתחבר קודם לחשבון Google"); return; }
+  if (!Backup.reconciled) { await Backup.reconcile(); }
+  if (!Store.hasContent()) { toast("אין נתונים לגיבוי — הגיבוי בענן נשמר ולא נדרס"); return; }
+  toast("מגבה...");
+  const ok = await Backup.push(true);
+  toast(ok ? "☁️ גובה בהצלחה" : "הגיבוי נכשל — לחץ על שורת החשבון לפרטים");
+});
+
+$("#backup-restore-row").addEventListener("click", async () => {
+  if (!Backup.signedIn()) { toast("יש להתחבר קודם לחשבון Google"); return; }
+  let list;
+  try { list = await window.CloudSync.listBackups(); }
+  catch (e) { await alertDialog("שגיאה", `${(e && (e.code || e.message)) || e}`); return; }
+  if (!list.length) { await alertDialog("שחזור מהענן", "עדיין אין גיבויים בענן."); return; }
+  const label = (id) => id === "latest" ? "הגיבוי האחרון" : id === "pre-restore" ? "עותק ביטחון (לפני שחזור)" : `גיבוי יומי ${id.slice(4).split("-").reverse().join("/")}`;
+  openSheet(`<h3 style="margin:0 0 10px">שחזור מהענן</h3>
+    <p class="hint-text">בחר גיבוי לשחזור. הנתונים הנוכחיים במכשיר יוחלפו (נשמר עותק ביטחון).</p>
+    <div class="settings-group">${list.map((b) => `
+      <div class="link-row" data-restore="${esc(b.id)}" style="cursor:pointer;flex-direction:column;align-items:flex-start;gap:2px">
+        <span>${esc(label(b.id))}</span>
+        <span class="hint-text" style="margin:0">${esc(fmtDateTime(b.savedAt))} · ${esc(fmtCounts(b.counts))}</span>
+      </div>`).join("")}</div>`);
+  $$("[data-restore]", $("#sheet-content")).forEach((row) => row.addEventListener("click", async () => {
+    const id = row.dataset.restore;
+    const ok = await confirmDialog("שחזור גיבוי", "הנתונים הנוכחיים במכשיר יוחלפו בגיבוי שנבחר. להמשיך?", "שחזר", false);
+    if (!ok) return;
+    try {
+      const b = await window.CloudSync.getBackup(id);
+      if (!b) { toast("הגיבוי לא נמצא"); return; }
+      await Backup.safetyCopy();
+      applyImportedJSON(b.json);
+      Backup.lastPushedJson = null;
+      closeSheet();
+      toast("הנתונים שוחזרו מהענן");
+    } catch (e) { await alertDialog("שחזור נכשל", `${(e && (e.code || e.message)) || e}`); }
+  }));
+});
+updateBackupLabel();
+
+// מבקש מהדפדפן לא למחוק את נתוני האתר אוטומטית כשנגמר מקום (לא מגן ממחיקה ידנית — לכן יש גיבוי לענן)
+if (navigator.storage && navigator.storage.persist) { navigator.storage.persist().catch(() => {}); }
 
 // Notification permission UI
 function updateNotifPermissionLabel() {

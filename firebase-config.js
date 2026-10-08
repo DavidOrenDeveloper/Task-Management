@@ -8,12 +8,12 @@
 // כלומר בדיוק כמו שהיא עובדת היום (תזכורות רק כשהאפליקציה פתוחה).
 
 export const FIREBASE_CONFIG = {
-  apiKey: "AIzaSyBGGi6gbwsOzmyhmzgx7ihoSATVYEPgA4k",
-  authDomain: "task-manager-24802.firebaseapp.com",
-  projectId: "task-manager-24802",
-  storageBucket: "task-manager-24802.firebasestorage.app",
-  messagingSenderId: "74331600099",
-  appId: "1:74331600099:web:fadcfba0ae49863df301d6",
+  apiKey: "AIzaSyAoLwFVXWU5nhbEyIQ0vMiEg2d6ch48Unc",
+  authDomain: "task-manager-b67c1.firebaseapp.com",
+  projectId: "task-manager-b67c1",
+  storageBucket: "task-manager-b67c1.firebasestorage.app",
+  messagingSenderId: "764515646230",
+  appId: "1:764515646230:web:62967e9c32ea66fc4b2e37",
 };
 
 // כל מכשיר/אתר שמשתמש באותו SITE_ID "רואה" את אותן תזכורות בענן.

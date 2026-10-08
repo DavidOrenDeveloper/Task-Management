@@ -89,6 +89,15 @@ function load() {
 
 function save(data) {
   localStorage.setItem(DB_KEY, JSON.stringify(data));
+  // מאפשר לגיבוי האוטומטי לענן לדעת שהיה שינוי (ראה app.js → Backup)
+  try { window.dispatchEvent(new Event("store-changed")); } catch (e) { /* ignore */ }
+}
+
+// האם יש בנתונים תוכן אמיתי (ולא מצב ריק/התחלתי)? משמש כדי לא לדרוס גיבוי תקין בנתונים ריקים.
+function dataHasContent(d) {
+  if (!d) return false;
+  return ["buildings", "tasks", "orders", "questions", "generalNotes", "locationNotes"]
+    .some((k) => Array.isArray(d[k]) && d[k].length > 0);
 }
 
 function nextOrder(arr) {
@@ -425,6 +434,12 @@ const Store = {
   },
 
   // ---------- Backup / restore (manual multi-device sync) ----------
+  hasContent() { return dataHasContent(this.data); },
+  counts() {
+    const d = this.data;
+    return { tasks: d.tasks.length, orders: d.orders.length, buildings: d.buildings.length,
+             questions: d.questions.length, notes: d.generalNotes.length + d.locationNotes.length };
+  },
   exportJSON() {
     return JSON.stringify(this.data, null, 2);
   },
