@@ -49,6 +49,10 @@
         <button class="sort-btn" id="tasks-sort-btn" data-list="tasks">⇅ מיון</button>
       </div>
     </div>
+    <div class="tools-row">
+      <button class="sort-btn" id="tasks-groups-btn">📁 תיקיות</button>
+      <button class="sort-btn" id="tasks-date-btn">📅 תאריך</button>
+    </div>
     <div class="chip-row" id="tasks-status-filter">
       <div class="chip active" data-status="all">הכל</div>
       <div class="chip" data-status="open">פתוח</div>
@@ -69,13 +73,7 @@
         <button class="sort-btn" id="orders-sort-btn" data-list="orders">⇅ מיון</button>
       </div>
     </div>
-    <div class="chip-row" id="orders-status-filter">
-      <div class="chip active" data-status="all">הכל</div>
-      <div class="chip" data-status="pending">לא הוזמן</div>
-      <div class="chip" data-status="ordered">הוזמן</div>
-      <div class="chip" data-status="arrived">הגיע</div>
-      <div class="chip" data-status="installed">הותקן</div>
-    </div>
+    <div class="chip-row" id="orders-status-filter"></div>
     <div id="orders-list"></div>
   </section>
 
@@ -156,6 +154,9 @@
       </div>
       <div class="link-row" id="manage-order-categories">
         <span>קטגוריות הזמנה</span><span>›</span>
+      </div>
+      <div class="link-row" id="manage-order-statuses">
+        <span>שלבי הזמנה (לא הוזמן / הוזמן / ...)</span><span>›</span>
       </div>
     </div>
 

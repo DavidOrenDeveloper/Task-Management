@@ -1,5 +1,5 @@
 // app.js — ניווט, רינדור, וטיפול באירועים
-const APP_VERSION = "2.5.0";
+const APP_VERSION = "2.6.0";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -306,6 +306,9 @@ const state = {
   generalNotesSort: Store.data.uiPrefs.generalNotesSort || "manual",
   tasksUrgencyDir: Store.data.uiPrefs.tasksUrgencyDir || "asc",
   generalNotesUrgencyDir: Store.data.uiPrefs.generalNotesUrgencyDir || "asc",
+  ordersUrgencyDir: Store.data.uiPrefs.ordersUrgencyDir || "asc",
+  taskDateFrom: null,
+  taskDateTo: null,
   locNotesSort: "manual",
   locNotesUrgencyDir: Store.data.uiPrefs.locNotesUrgencyDir || "asc",
 };
@@ -768,6 +771,104 @@ const TASKS_SORT_OPTIONS = [
   { value: "manual", label: "סדר ידני (חיצים)" },
 ];
 
+
+// ---------------- תאריך/שעה קצר ----------------
+function fmtStamp(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+const startOfDay = (ts) => { const d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime(); };
+const endOfDay = (ts) => { const d = new Date(ts); d.setHours(23, 59, 59, 999); return d.getTime(); };
+function toDateInputValue(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+// ---------------- מצב סימון וי: מפרקים את טקסט המשימה לשורות ----------------
+// כל שורה (פסקה / שורה בתוך רשימה / טקסט שמופרד ב-Enter) מקבלת תיבת סימון משלה.
+// השורות שסומנו נשמרות לפי הטקסט שלהן, כך שעריכה/הוספה של שורות אחרות לא מבלבלת את הסימונים.
+function richToLines(raw) {
+  const root = document.createElement("div");
+  root.innerHTML = renderRichText(raw);
+  const lines = [];
+  let buf = [];
+  const flush = () => {
+    const div = document.createElement("div");
+    buf.forEach((n) => div.appendChild(n.cloneNode(true)));
+    const text = (div.textContent || "").replace(/\s+/g, " ").trim();
+    if (text) lines.push({ html: div.innerHTML, text });
+    buf = [];
+  };
+  const BLOCK = /^(DIV|P|UL|OL|LI|H[1-6]|BLOCKQUOTE)$/;
+  (function walk(nodes) {
+    Array.from(nodes).forEach((n) => {
+      if (n.nodeType === 1 && n.tagName === "BR") { flush(); return; }
+      if (n.nodeType === 1 && BLOCK.test(n.tagName)) { flush(); walk(n.childNodes); flush(); return; }
+      buf.push(n);
+    });
+  })(root.childNodes);
+  flush();
+  return lines;
+}
+function checklistHTML(lines, doneSet) {
+  return lines.map((l, i) => {
+    const done = doneSet.has(l.text);
+    return `<label class="chk-line ${done ? "done" : ""}" data-i="${i}"><input type="checkbox" class="chk-box" ${done ? "checked" : ""}><span class="rich-content">${l.html}</span></label>`;
+  }).join("");
+}
+
+// ---------------- מנהל רשימה גנרי (תיקיות, שלבי הזמנה) ----------------
+// cfg: { title, hint, placeholder, getItems:()=>[{id,name,count}], add, rename, move, remove(async, false=בוטל), onChange }
+function openItemsManager(cfg) {
+  const items = cfg.getItems();
+  openSheet(`
+    <h3>${esc(cfg.title)}</h3>
+    ${cfg.hint ? `<p class="hint-text">${esc(cfg.hint)}</p>` : ""}
+    <div>
+      ${items.map((it, i) => `
+        <div class="link-row mgr-row" data-id="${esc(it.id)}">
+          ${noteArrowsHTML(i, items.length)}
+          <span class="mgr-name">${esc(it.name)}${it.count != null ? ` <small>(${it.count})</small>` : ""}</span>
+          <span class="mgr-btns">
+            <button type="button" class="mgr-btn" data-mact="rename" aria-label="שינוי שם">✏️</button>
+            <button type="button" class="mgr-btn" data-mact="delete" aria-label="מחיקה">🗑</button>
+          </span>
+        </div>`).join("") || `<p style="color:var(--text-dim);font-size:14px">אין פריטים עדיין</p>`}
+    </div>
+    <div class="inline-add">
+      <input type="text" id="mgr-new" placeholder="${esc(cfg.placeholder || "חדש...")}">
+      <button id="mgr-add">הוסף</button>
+    </div>
+  `);
+  const refresh = () => { if (cfg.onChange) cfg.onChange(); openItemsManager(cfg); };
+  $("#mgr-add").addEventListener("click", () => {
+    const v = $("#mgr-new").value.trim();
+    if (!v) return;
+    cfg.add(v);
+    refresh();
+  });
+  $("#mgr-new").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("#mgr-add").click(); } });
+  $$(".mgr-row", $("#sheet-content")).forEach((row) => row.addEventListener("click", async (e) => {
+    const id = row.dataset.id;
+    const mv = e.target.closest("[data-move]");
+    if (mv) { cfg.move(id, Number(mv.dataset.move)); refresh(); return; }
+    const act = e.target.closest("[data-mact]");
+    if (!act) return;
+    if (act.dataset.mact === "rename") {
+      const cur = cfg.getItems().find((x) => x.id === id);
+      const v = await promptDialog("שינוי שם", "שם", cur ? cur.name : "");
+      if (v) { cfg.rename(id, v); refresh(); }
+    } else {
+      const res = await cfg.remove(id);
+      if (res !== false) refresh();
+    }
+  }));
+}
+
 // ---------------- Numeric urgency ranking (shared by tasks + notes) ----------------
 // Lower number = more urgent (1 is most urgent). Items without a number always sort last.
 // Clicking the same "urgency number" sort option again flips the direction — this is handled
@@ -834,8 +935,8 @@ function sortItems(items, mode, kind) {
   }
   if (mode === "category" && kind === "order") { arr.sort((a, b) => (a.category || "").localeCompare(b.category || "", "he")); return arr; }
   if (mode === "status" && kind === "order") {
-    const idx = { pending: 0, ordered: 1, arrived: 2, installed: 3 };
-    arr.sort((a, b) => idx[a.status] - idx[b.status]);
+    const idx = Object.fromEntries(orderSteps().map((s, i) => [s.key, i]));
+    arr.sort((a, b) => (idx[a.status] ?? 99) - (idx[b.status] ?? 99));
     return arr;
   }
   return arr;
@@ -852,13 +953,75 @@ function renderTaskTypeFilterChips() {
   }));
 }
 
+function taskFiltersActive() {
+  return state.taskStatusFilter !== "all" || state.taskTypeFilter !== "all" || !!state.taskDateFrom || !!state.taskDateTo;
+}
+function taskCardHTML(t) {
+  const loc = locationLabel(t);
+  const budget = buildingBudgetFor(t) || t.budgetCode;
+  const urgency = taskUrgency(t);
+  const lines = t.checkMode ? richToLines(t.title) : null;
+  const doneSet = new Set(t.checkDone || []);
+  const chkDone = lines ? lines.filter((l) => doneSet.has(l.text)).length : 0;
+  return `
+    <div class="card ${t.status === "done" ? "done" : ""} ${urgency ? "urgency-" + urgency : ""} ${urgencyColorClass(t)}" data-id="${t.id}" data-reorder-item>
+      ${t.heading ? `<div class="card-heading">${esc(t.heading)}</div>` : ""}
+      <div class="card-top">
+        <span class="drag-handle">⠿</span>
+        <div class="status-dot ${t.status}" data-action="cycle-status"></div>
+        <div class="card-title rich-content ${t.status === "done" ? "strike" : ""}">${lines ? checklistHTML(lines, doneSet) : renderRichText(t.title)}</div>
+      </div>
+      <div class="card-meta">
+        <span class="tag type">${esc(t.type)}</span>
+        ${loc ? `<span class="tag loc">📍 ${esc(loc)}</span>` : ""}
+        ${t.priority === "high" ? `<span class="tag prio-high">דחוף</span>` : ""}
+        ${urgencyBadgeHTML(t)}
+        ${lines && lines.length ? `<span class="tag chk-progress">☑ ${chkDone}/${lines.length}</span>` : ""}
+        ${t.hold ? `<span class="tag hold">⏸ בהמתנה</span>` : ""}
+        ${t.dueAt && !t.hold && t.status !== "done" ? `<span class="tag due ${urgency === "overdue" ? "due-overdue" : urgency === "soon" ? "due-soon" : "due-later"}">⏰ ${esc(formatDueLabel(t.dueAt))}</span>` : ""}
+      </div>
+      ${t.notes.length ? `<div class="card-notes">${t.notes.map((n) => `<div class="note-line"><span>${esc(n.text)}</span><button class="note-del" data-note="${n.id}">✕</button></div>`).join("")}</div>` : ""}
+      ${t.budgetCode || budget ? `<button class="budget-toggle" data-action="toggle-budget">💰 סעיף תקציבי</button><div class="budget-value">קוד: <b>${esc(t.budgetCode || budget)}</b></div>` : ""}
+      <div class="card-actions">
+        <button data-action="toggle-check" class="${t.checkMode ? "on" : ""}">☑ סימון</button>
+        <button data-action="add-note">📝 הוסף הערה</button>
+        <button data-action="edit">✏️ ערוך</button>
+        <button data-action="delete" class="danger">🗑 מחק</button>
+      </div>
+      ${t.dueAt && t.status !== "done" ? `
+      <div class="reminder-row-actions" style="margin-top:10px">
+        <button data-action="complete">✓ הושלם</button>
+        <button data-action="snooze">⏰ נודניק</button>
+        <button data-action="toggle-hold" class="${t.hold ? "on" : ""}">${t.hold ? "▶ הפעל שוב" : "⏸ המתנה"}</button>
+      </div>` : ""}
+      <div class="card-stamp">נוצר ${fmtStamp(t.createdAt)}${t.editedAt ? ` · נערך ${fmtStamp(t.editedAt)}` : ""}</div>
+    </div>`;
+}
+
+function updateTaskDateButton() {
+  const btn = $("#tasks-date-btn");
+  if (!btn) return;
+  const f = state.taskDateFrom, t = state.taskDateTo;
+  const short = (ts) => { const d = new Date(ts); return `${d.getDate()}/${d.getMonth() + 1}`; };
+  if (f || t) {
+    btn.textContent = `📅 ${f ? short(f) : "…"} – ${t ? short(t) : "…"}`;
+    btn.classList.add("active");
+  } else {
+    btn.textContent = "📅 תאריך";
+    btn.classList.remove("active");
+  }
+}
+
 function renderTasks() {
   renderTaskTypeFilterChips();
+  updateTaskDateButton();
   const list = $("#tasks-list");
   let items = [...Store.data.tasks];
   if (state.taskStatusFilter === "hold") items = items.filter((t) => t.hold);
   else if (state.taskStatusFilter !== "all") items = items.filter((t) => t.status === state.taskStatusFilter);
   if (state.taskTypeFilter !== "all") items = items.filter((t) => t.type === state.taskTypeFilter);
+  if (state.taskDateFrom) items = items.filter((t) => t.createdAt >= state.taskDateFrom);
+  if (state.taskDateTo) items = items.filter((t) => t.createdAt <= state.taskDateTo);
 
   if (state.tasksSort === "default") {
     items.sort((a, b) => {
@@ -874,48 +1037,149 @@ function renderTasks() {
 
   $("#tasks-count").textContent = `${items.length} פריטים`;
 
-  if (!items.length) {
-    list.innerHTML = `<div class="empty-state"><div class="big">✅</div><p>אין משימות להצגה.<br>לחץ על + כדי להוסיף משימה חדשה.</p></div>`;
+  const groups = [...Store.data.taskGroups].sort((a, b) => a.order - b.order);
+  const byGroup = new Map(groups.map((g) => [g.id, []]));
+  const loose = [];
+  items.forEach((t) => { if (t.groupId && byGroup.has(t.groupId)) byGroup.get(t.groupId).push(t); else loose.push(t); });
+  const filtering = taskFiltersActive();
+
+  if (!items.length && (filtering || !groups.length)) {
+    list.innerHTML = `<div class="empty-state"><div class="big">✅</div><p>אין משימות להצגה.<br>${filtering ? "נסה לשנות או לנקות את הסינון." : "לחץ על + כדי להוסיף משימה חדשה."}</p></div>`;
     return;
   }
 
-  list.innerHTML = items.map((t) => {
-    const loc = locationLabel(t);
-    const budget = buildingBudgetFor(t) || t.budgetCode;
-    const urgency = taskUrgency(t);
-    return `
-    <div class="card ${t.status === "done" ? "done" : ""} ${urgency ? "urgency-" + urgency : ""} ${urgencyColorClass(t)}" data-id="${t.id}" data-reorder-item>
-      ${t.heading ? `<div class="card-heading">${esc(t.heading)}</div>` : ""}
-      <div class="card-top">
-        <span class="drag-handle">⠿</span>
-        <div class="status-dot ${t.status}" data-action="cycle-status"></div>
-        <div class="card-title rich-content ${t.status === "done" ? "strike" : ""}">${renderRichText(t.title)}</div>
-      </div>
-      <div class="card-meta">
-        <span class="tag type">${esc(t.type)}</span>
-        ${loc ? `<span class="tag loc">📍 ${esc(loc)}</span>` : ""}
-        ${t.priority === "high" ? `<span class="tag prio-high">דחוף</span>` : ""}
-        ${urgencyBadgeHTML(t)}
-        ${t.hold ? `<span class="tag hold">⏸ בהמתנה</span>` : ""}
-        ${t.dueAt && !t.hold && t.status !== "done" ? `<span class="tag due ${urgency === "overdue" ? "due-overdue" : urgency === "soon" ? "due-soon" : "due-later"}">⏰ ${esc(formatDueLabel(t.dueAt))}</span>` : ""}
-      </div>
-      ${t.notes.length ? `<div class="card-notes">${t.notes.map((n) => `<div class="note-line"><span>${esc(n.text)}</span><button class="note-del" data-note="${n.id}">✕</button></div>`).join("")}</div>` : ""}
-      ${t.budgetCode || budget ? `<button class="budget-toggle" data-action="toggle-budget">💰 סעיף תקציבי</button><div class="budget-value">קוד: <b>${esc(t.budgetCode || budget)}</b></div>` : ""}
-      <div class="card-actions">
-        <button data-action="add-note">📝 הוסף הערה</button>
-        <button data-action="edit">✏️ ערוך</button>
-        <button data-action="delete" class="danger">🗑 מחק</button>
-      </div>
-      ${t.dueAt && t.status !== "done" ? `
-      <div class="reminder-row-actions" style="margin-top:10px">
-        <button data-action="complete">✓ הושלם</button>
-        <button data-action="snooze">⏰ נודניק</button>
-        <button data-action="toggle-hold" class="${t.hold ? "on" : ""}">${t.hold ? "▶ הפעל שוב" : "⏸ המתנה"}</button>
-      </div>` : ""}
-      <div style="font-size:11px;color:var(--text-dim);margin-top:8px">עודכן ${timeAgo(t.updatedAt)}</div>
-    </div>`;
-  }).join("");
+  let html = "";
+  groups.forEach((g) => {
+    const arr = byGroup.get(g.id);
+    if (filtering && !arr.length) return;
+    html += `
+      <div class="task-group ${g.collapsed ? "collapsed" : ""}" data-group="${g.id}">
+        <div class="task-group-head" data-gaction="toggle">
+          <span class="tg-arrow">▾</span>
+          <span class="tg-name">📁 ${esc(g.name)}</span>
+          <span class="tg-count">${arr.length}</span>
+          <span class="tg-actions">
+            <button type="button" data-gaction="add" title="משימה חדשה בתיקייה">＋</button>
+            <button type="button" data-gaction="rename" title="שינוי שם">✏️</button>
+            <button type="button" data-gaction="delete" title="מחיקת תיקייה">🗑</button>
+          </span>
+        </div>
+        <div class="task-group-body" data-group-body="${g.id}">
+          ${arr.length ? arr.map(taskCardHTML).join("") : `<p class="tg-empty">אין משימות בתיקייה. לחץ ＋ כדי להוסיף.</p>`}
+        </div>
+      </div>`;
+  });
+  if (loose.length) {
+    if (groups.length) html += `<div class="task-loose-title">ללא תיקייה</div>`;
+    html += loose.map(taskCardHTML).join("");
+  }
+  list.innerHTML = html;
+  $$("[data-group-body]", list).forEach((body) => {
+    enableLongPressReorder(body, "[data-reorder-item]", (ids) => {
+      Store.reorderTasks(ids);
+      if (state.tasksSort !== "manual") { state.tasksSort = "manual"; Store.setUiPref("tasksSort", "manual"); }
+      renderTasks();
+    });
+  });
 }
+
+// ---- תיקיות משימות: לחיצות על כותרת התיקייה ----
+$("#tasks-list").addEventListener("click", async (e) => {
+  const head = e.target.closest(".task-group-head");
+  if (!head) return;
+  const el = e.target.closest("[data-gaction]");
+  if (!el) return;
+  const gid = head.closest(".task-group").dataset.group;
+  const g = Store.data.taskGroups.find((x) => x.id === gid);
+  if (!g) return;
+  const act = el.dataset.gaction;
+  if (act === "toggle") { Store.toggleTaskGroup(gid); renderTasks(); return; }
+  if (act === "add") { openTaskForm(null, null, gid); return; }
+  if (act === "rename") {
+    const name = await promptDialog("שינוי שם תיקייה", "שם", g.name);
+    if (name) { Store.renameTaskGroup(gid, name); renderTasks(); }
+    return;
+  }
+  if (act === "delete") { await deleteTaskGroupFlow(gid); }
+});
+async function deleteTaskGroupFlow(gid) {
+  const g = Store.data.taskGroups.find((x) => x.id === gid);
+  if (!g) return false;
+  const n = Store.data.tasks.filter((t) => t.groupId === gid).length;
+  if (n === 0) {
+    const ok = await confirmDialog("מחיקת תיקייה", `למחוק את התיקייה "${g.name}"?`, "מחיקה");
+    if (!ok) return false;
+    Store.deleteTaskGroup(gid, "ungroup");
+  } else {
+    const choice = await chooseDialog(`מחיקת התיקייה "${g.name}"`, `יש ${n} משימות בתיקייה. מה לעשות איתן?`, [
+      { label: "ביטול", value: "cancel", style: "ghost" },
+      { label: "להשאיר את המשימות (בלי תיקייה)", value: "ungroup", style: "primary" },
+      { label: "למחוק גם את המשימות", value: "delete", style: "danger" },
+    ]);
+    if (!choice || choice === "cancel") return false;
+    if (choice === "delete") Store.data.tasks.filter((t) => t.groupId === gid).forEach((t) => window.CloudSync && window.CloudSync.removeReminder(t.id));
+    Store.deleteTaskGroup(gid, choice);
+  }
+  renderTasks();
+  toast("התיקייה נמחקה");
+}
+function openGroupsManager() {
+  openItemsManager({
+    title: "תיקיות משימות",
+    hint: "תיקיות מקבצות משימות (למשל \"פגישות\"). את התיקייה בוחרים בטופס המשימה, ולחיצה על כותרת תיקייה מקפלת/פותחת אותה.",
+    placeholder: "שם תיקייה חדשה...",
+    getItems: () => [...Store.data.taskGroups].sort((a, b) => a.order - b.order)
+      .map((g) => ({ id: g.id, name: "📁 " + g.name, count: Store.data.tasks.filter((t) => t.groupId === g.id).length })),
+    add: (v) => Store.addTaskGroup(v),
+    rename: (id, v) => Store.renameTaskGroup(id, v.replace(/^📁\s*/, "")),
+    move: (id, dir) => Store.moveTaskGroup(id, dir),
+    remove: (id) => deleteTaskGroupFlow(id),
+    onChange: () => renderTasks(),
+  });
+}
+$("#tasks-groups-btn").addEventListener("click", openGroupsManager);
+
+// ---- סינון משימות לפי תאריך יצירה ----
+function openTaskDateFilter() {
+  openSheet(`
+    <h3>סינון לפי תאריך יצירה</h3>
+    <div class="chip-row" style="flex-wrap:wrap">
+      <div class="chip" data-quick="today">היום</div>
+      <div class="chip" data-quick="yesterday">אתמול</div>
+      <div class="chip" data-quick="7">7 ימים אחרונים</div>
+      <div class="chip" data-quick="30">30 יום אחרונים</div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>מתאריך</label><input type="date" id="df-from" value="${toDateInputValue(state.taskDateFrom)}"></div>
+      <div class="field"><label>עד תאריך</label><input type="date" id="df-to" value="${toDateInputValue(state.taskDateTo)}"></div>
+    </div>
+    <button class="btn-primary" id="df-apply">החל סינון</button>
+    <button class="btn-secondary" id="df-clear" style="margin-top:8px">נקה סינון</button>
+  `);
+  $$("[data-quick]", $("#sheet-content")).forEach((c) => c.addEventListener("click", () => {
+    const now = Date.now();
+    const q = c.dataset.quick;
+    let from, to;
+    if (q === "today") { from = now; to = now; }
+    else if (q === "yesterday") { from = now - 86400000; to = from; }
+    else { from = now - Number(q) * 86400000; to = now; }
+    $("#df-from").value = toDateInputValue(from);
+    $("#df-to").value = toDateInputValue(to);
+  }));
+  $("#df-apply").addEventListener("click", () => {
+    const f = $("#df-from").value, t = $("#df-to").value;
+    state.taskDateFrom = f ? startOfDay(new Date(f + "T00:00:00").getTime()) : null;
+    state.taskDateTo = t ? endOfDay(new Date(t + "T00:00:00").getTime()) : null;
+    closeSheet();
+    renderTasks();
+  });
+  $("#df-clear").addEventListener("click", () => {
+    state.taskDateFrom = null; state.taskDateTo = null;
+    closeSheet();
+    renderTasks();
+  });
+}
+$("#tasks-date-btn").addEventListener("click", openTaskDateFilter);
 
 $$("#tasks-status-filter .chip").forEach((c) => c.addEventListener("click", () => {
   $$("#tasks-status-filter .chip").forEach((x) => x.classList.remove("active"));
@@ -966,9 +1230,15 @@ function reminderSectionHTML(task) {
   `;
 }
 
-function taskFormHTML(task) {
+function groupOptionsHTML(selectedId) {
+  const groups = [...Store.data.taskGroups].sort((a, b) => a.order - b.order);
+  return `<option value="">ללא תיקייה</option>` +
+    groups.map((g) => `<option value="${esc(g.id)}" ${g.id === selectedId ? "selected" : ""}>📁 ${esc(g.name)}</option>`).join("") +
+    `<option value="__new">➕ תיקייה חדשה...</option>`;
+}
+function taskFormHTML(task, presetGroupId) {
   const isEdit = !!task;
-  task = task || { title: "", type: Store.data.taskTypes[0] || "", priority: "normal", buildingId: "", floorId: "", budgetCode: "", urgency: null };
+  task = task || { title: "", type: Store.data.taskTypes[0] || "", priority: "normal", buildingId: "", floorId: "", budgetCode: "", urgency: null, groupId: presetGroupId || "" };
   return `
     <h3>${isEdit ? "עריכת משימה" : "משימה חדשה"}</h3>
     <div class="field">
@@ -978,6 +1248,10 @@ function taskFormHTML(task) {
     <div class="field">
       <label>תיאור המשימה</label>
       ${richEditorHTML("f-title", "לדוגמה: להתקין לוח חשמל בקומה 3", task.title)}
+    </div>
+    <div class="field">
+      <label>תיקייה</label>
+      <select id="f-group">${groupOptionsHTML(task.groupId || "")}</select>
     </div>
     <div class="field">
       <label>סוג</label>
@@ -999,9 +1273,9 @@ function taskFormHTML(task) {
   `;
 }
 
-function openTaskForm(taskId, presetLocation) {
+function openTaskForm(taskId, presetLocation, presetGroupId) {
   const task = taskId ? Store.data.tasks.find((t) => t.id === taskId) : null;
-  openSheet(taskFormHTML(task));
+  openSheet(taskFormHTML(task, presetGroupId));
   wireFloorSelect(task ? task.buildingId : (presetLocation && presetLocation.buildingId), task ? task.floorId : (presetLocation && presetLocation.floorId));
   if (presetLocation && !task) {
     $("#f-building").value = presetLocation.buildingId || "";
@@ -1024,6 +1298,19 @@ function openTaskForm(taskId, presetLocation) {
     e.target.classList.add("active");
     selPriority = e.target.dataset.val;
   });
+  const gSel = $("#f-group");
+  let prevGroup = gSel.value;
+  gSel.addEventListener("change", async () => {
+    if (gSel.value !== "__new") { prevGroup = gSel.value; return; }
+    const name = await promptDialog("תיקייה חדשה", "שם התיקייה", "", "לדוגמה: פגישות");
+    if (name) {
+      const g = Store.addTaskGroup(name);
+      gSel.innerHTML = groupOptionsHTML(g.id);
+      prevGroup = g.id;
+    } else {
+      gSel.value = prevGroup;
+    }
+  });
   $("#save-task").addEventListener("click", async () => {
     const title = getRichValue("f-title");
     if (!title) { toast("צריך להזין תיאור למשימה"); return; }
@@ -1037,6 +1324,8 @@ function openTaskForm(taskId, presetLocation) {
     }
     const payload = {
       heading: $("#f-heading").value.trim(),
+      groupId: $("#f-group").value && $("#f-group").value !== "__new" ? $("#f-group").value : null,
+      editedAt: task ? Date.now() : null,
       title,
       type: selType,
       priority: selPriority,
@@ -1158,6 +1447,26 @@ function wireCardActions(container, kind) {
     const card = e.target.closest(".card");
     if (!card) return;
     const id = card.dataset.id;
+    if (kind === "task" && e.target.classList.contains("chk-box")) {
+      const t = Store.data.tasks.find((x) => x.id === id);
+      const line = e.target.closest(".chk-line");
+      const lines = t ? richToLines(t.title) : [];
+      const l = lines[Number(line && line.dataset.i)];
+      if (t && l) {
+        const set = new Set(t.checkDone || []);
+        if (set.has(l.text)) set.delete(l.text); else set.add(l.text);
+        Store.updateTask(id, { checkDone: [...set] }, { touch: false });
+      }
+      renderTasks();
+      return;
+    }
+    if (kind === "task" && e.target.closest(".chk-line")) return;
+    if (e.target.dataset.action === "toggle-check" && kind === "task") {
+      const t = Store.data.tasks.find((x) => x.id === id);
+      Store.updateTask(id, { checkMode: !t.checkMode }, { touch: false });
+      renderTasks();
+      return;
+    }
     if (e.target.dataset.action === "cycle-status" && kind === "task") {
       const t = Store.data.tasks.find((x) => x.id === id);
       const next = { open: "in_progress", in_progress: "done", done: "open" };
@@ -1214,25 +1523,62 @@ function wireCardActions(container, kind) {
 // ==========================================================
 // ORDERS
 // ==========================================================
-const ORDER_STEPS = [
-  { key: "pending", label: "לא הוזמן" },
-  { key: "ordered", label: "הוזמן" },
-  { key: "arrived", label: "הגיע" },
-  { key: "installed", label: "הותקן" },
-];
+// שלבי ההזמנה ניתנים לעריכה (עוד ← שלבי הזמנה, או כפתור "✏️ שלבים" בשורת הסינון)
+function orderSteps() { return Store.data.orderStatuses; }
+function orderStepLabel(key) { const s = orderSteps().find((x) => x.key === key); return s ? s.label : ""; }
+function renderOrderStatusChips() {
+  const wrap = $("#orders-status-filter");
+  const steps = orderSteps();
+  if (state.orderStatusFilter !== "all" && !steps.some((s) => s.key === state.orderStatusFilter)) state.orderStatusFilter = "all";
+  wrap.innerHTML = `<div class="chip ${state.orderStatusFilter === "all" ? "active" : ""}" data-status="all">הכל</div>` +
+    steps.map((s) => `<div class="chip ${state.orderStatusFilter === s.key ? "active" : ""}" data-status="${esc(s.key)}">${esc(s.label)}</div>`).join("") +
+    `<div class="chip chip-edit" data-edit-statuses="1">✏️ שלבים</div>`;
+}
+$("#orders-status-filter").addEventListener("click", (e) => {
+  const chip = e.target.closest(".chip");
+  if (!chip) return;
+  if (chip.dataset.editStatuses) { openOrderStatusManager(); return; }
+  state.orderStatusFilter = chip.dataset.status;
+  renderOrders();
+});
+function openOrderStatusManager() {
+  openItemsManager({
+    title: "שלבי הזמנה",
+    hint: "השלבים מופיעים בשורת הסינון ובכפתורי ההתקדמות בכל הזמנה. אפשר להוסיף, לשנות שם, לסדר ולמחוק.",
+    placeholder: "שלב חדש...",
+    getItems: () => orderSteps().map((s) => ({ id: s.key, name: s.label, count: Store.usageOfOrderStatus(s.key).length })),
+    add: (v) => Store.addOrderStatus(v),
+    rename: (id, v) => Store.renameOrderStatus(id, v),
+    move: (id, dir) => Store.moveOrderStatus(id, dir),
+    remove: async (id) => {
+      if (orderSteps().length <= 1) { toast("חייב להישאר לפחות שלב אחד"); return false; }
+      const used = Store.usageOfOrderStatus(id).length;
+      const other = orderSteps().find((s) => s.key !== id);
+      const ok = await confirmDialog("מחיקת שלב",
+        used ? `יש ${used} הזמנות בשלב הזה. הן יועברו לשלב "${other.label}". למחוק?` : "למחוק את השלב?", "מחיקה");
+      if (!ok) return false;
+      Store.deleteOrderStatus(id);
+    },
+    onChange: () => renderOrders(),
+  });
+}
+$("#manage-order-statuses").addEventListener("click", openOrderStatusManager);
 const ORDERS_SORT_OPTIONS = [
   { value: "default", label: "ברירת מחדל (חדש קודם)" },
   { value: "alpha", label: "לפי א-ב" },
   { value: "category", label: "לפי קטגוריה" },
   { value: "status", label: "לפי שלב הזמנה" },
+  { value: "urgencyNum", label: "לפי מספר דחיפות" },
   { value: "manual", label: "סדר ידני (חיצים)" },
 ];
 
 function renderOrders() {
+  renderOrderStatusChips();
   const list = $("#orders-list");
   let items = [...Store.data.orders];
   if (state.orderStatusFilter !== "all") items = items.filter((o) => o.status === state.orderStatusFilter);
   if (state.ordersSort === "default") items.sort((a, b) => b.createdAt - a.createdAt);
+  else if (state.ordersSort === "urgencyNum") items.sort((a, b) => compareUrgency(a, b, state.ordersUrgencyDir));
   else items = sortItems(items, state.ordersSort, "order");
   $("#orders-count").textContent = `${items.length} פריטים`;
 
@@ -1244,9 +1590,10 @@ function renderOrders() {
   list.innerHTML = items.map((o) => {
     const loc = locationLabel(o);
     const budget = buildingBudgetFor(o) || o.budgetCode;
-    const stepIdx = ORDER_STEPS.findIndex((s) => s.key === o.status);
+    const steps = orderSteps();
+    const stepIdx = steps.findIndex((s) => s.key === o.status);
     return `
-    <div class="card" data-id="${o.id}" data-reorder-item>
+    <div class="card ${urgencyColorClass(o)}" data-id="${o.id}" data-reorder-item>
       ${o.heading ? `<div class="card-heading">${esc(o.heading)}</div>` : ""}
       <div class="card-top">
         <span class="drag-handle">⠿</span>
@@ -1255,11 +1602,12 @@ function renderOrders() {
       <div class="card-meta">
         <span class="tag type">${esc(o.category)}</span>
         ${loc ? `<span class="tag loc">📍 ${esc(loc)}</span>` : ""}
+        ${urgencyBadgeHTML(o)}
       </div>
       ${o.notes ? `<div class="card-notes"><div class="note-line"><span class="rich-content">${renderRichText(o.notes)}</span></div></div>` : ""}
       ${o.budgetCode || budget ? `<button class="budget-toggle" data-action="toggle-budget">💰 סעיף תקציבי</button><div class="budget-value">קוד: <b>${esc(o.budgetCode || budget)}</b></div>` : ""}
       <div class="order-steps">
-        ${ORDER_STEPS.map((s, i) => `<div class="order-step ${i <= stepIdx ? "active" : ""}" data-step="${s.key}">${s.label}</div>`).join("")}
+        ${steps.map((s, i) => `<div class="order-step ${i <= stepIdx ? "active" : ""}" data-step="${esc(s.key)}">${esc(s.label)}</div>`).join("")}
       </div>
       <div class="card-actions">
         <button data-action="edit">✏️ ערוך</button>
@@ -1289,15 +1637,14 @@ async function ordersClickHandler(e) {
   }
   if (!e.target.closest("button") && !e.target.closest(".drag-handle") && !e.target.closest(".order-step")) openOrderForm(id);
 }
-$$("#orders-status-filter .chip").forEach((c) => c.addEventListener("click", () => {
-  $$("#orders-status-filter .chip").forEach((x) => x.classList.remove("active"));
-  c.classList.add("active");
-  state.orderStatusFilter = c.dataset.status;
-  renderOrders();
-}));
 $("#orders-list").addEventListener("click", ordersClickHandler);
 $("#orders-sort-btn").addEventListener("click", (e) => {
-  openSortMenu(e.currentTarget, state.ordersSort, ORDERS_SORT_OPTIONS, (val) => {
+  const opts = ORDERS_SORT_OPTIONS.map((o) => o.value === "urgencyNum" ? { ...o, label: urgencySortLabel(state.ordersUrgencyDir) } : o);
+  openSortMenu(e.currentTarget, state.ordersSort, opts, (val) => {
+    if (val === "urgencyNum") {
+      state.ordersUrgencyDir = (state.ordersSort === "urgencyNum" && state.ordersUrgencyDir === "asc") ? "desc" : "asc";
+      Store.setUiPref("ordersUrgencyDir", state.ordersUrgencyDir);
+    }
     state.ordersSort = val; Store.setUiPref("ordersSort", val); renderOrders();
   });
 });
@@ -1309,32 +1656,41 @@ enableLongPressReorder($("#orders-list"), "[data-reorder-item]", (ids) => {
 
 function orderFormHTML(order) {
   const isEdit = !!order;
-  order = order || { title: "", category: Store.data.orderCategories[0] || "", qty: 1, buildingId: "", floorId: "", budgetCode: "", notes: "" };
+  order = order || { title: "", category: Store.data.orderCategories[0] || "", qty: 1, buildingId: "", floorId: "", budgetCode: "", notes: "", urgency: null };
   return `
     <h3>${isEdit ? "עריכת הזמנה" : "פריט חדש להזמנה"}</h3>
     <div class="field">
       <label>כותרת (אופציונלי — תופיע בקטן מעל הפריט)</label>
       <input type="text" id="f-heading" value="${esc(order.heading || "")}" placeholder="לדוגמה: חומרים לקומה 3">
     </div>
+    ${isEdit ? `
     <div class="field">
       <label>מה צריך להזמין</label>
       ${richEditorHTML("f-title", "לדוגמה: כבל NYY 3×2.5", order.title)}
     </div>
-    <div class="field-row">
-      <div class="field">
-        <label>קטגוריה</label>
-        <div id="f-category-wrap"></div>
+    <div class="field">
+      <label>כמות</label>
+      <div class="qty-stepper" id="f-qty-stepper">
+        <button type="button" data-q="-1" aria-label="הפחת">−</button>
+        <input type="number" id="f-qty" value="${order.qty || 1}" min="1" inputmode="numeric">
+        <button type="button" data-q="1" aria-label="הוסף">+</button>
       </div>
-      <div class="field">
-        <label>כמות</label>
-        <input type="number" id="f-qty" value="${order.qty || 1}" min="1">
-      </div>
+    </div>` : `
+    <div class="field">
+      <label>פריטים להזמנה — לכל פריט כמות משלו</label>
+      <div id="f-items"></div>
+      <button type="button" class="btn-secondary" id="f-add-item">+ הוספת פריט</button>
+    </div>`}
+    <div class="field">
+      <label>קטגוריה</label>
+      <div id="f-category-wrap"></div>
     </div>
     ${buildingSelectHTML(order.buildingId, order.floorId)}
     <div class="field">
       <label>הערה (אופציונלי)</label>
       ${richEditorHTML("f-notes", "פרטים נוספים...", order.notes)}
     </div>
+    ${urgencyFieldHTML("f-urgency", order.urgency)}
     ${budgetFieldHTML(order.budgetCode)}
     <button class="btn-primary" id="save-order">${isEdit ? "שמירה" : "הוספה לרשימה"}</button>
     ${isEdit ? `<button class="btn-danger" id="delete-order">מחיקה</button>` : ""}
@@ -1358,21 +1714,71 @@ function openOrderForm(orderId, presetLocation) {
     getSelected: () => selCategory,
     onSelect: (val) => { selCategory = val; },
   });
+  // ----- שורות פריט (בהזמנה חדשה): שם + כמות לכל פריט -----
+  const itemsWrap = $("#f-items");
+  const addItemRow = (focus) => {
+    const row = document.createElement("div");
+    row.className = "item-row";
+    row.innerHTML = `
+      <input type="text" class="item-name" placeholder="שם הפריט">
+      <div class="qty-stepper">
+        <button type="button" data-q="-1" aria-label="הפחת">−</button>
+        <input type="number" class="item-qty" value="1" min="1" inputmode="numeric">
+        <button type="button" data-q="1" aria-label="הוסף">+</button>
+      </div>
+      <button type="button" class="item-del" aria-label="הסר פריט">✕</button>`;
+    itemsWrap.appendChild(row);
+    if (focus) $(".item-name", row).focus();
+  };
+  if (itemsWrap) {
+    addItemRow(false);
+    $("#f-add-item").addEventListener("click", () => addItemRow(true));
+    itemsWrap.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && e.target.classList.contains("item-name")) { e.preventDefault(); addItemRow(true); }
+    });
+    itemsWrap.addEventListener("click", (e) => {
+      const row = e.target.closest(".item-row");
+      if (!row) return;
+      if (e.target.closest(".item-del")) {
+        if ($$(".item-row", itemsWrap).length > 1) row.remove();
+        else { $(".item-name", row).value = ""; $(".item-qty", row).value = 1; }
+      }
+    });
+  }
+  // כפתורי +/- של הכמות — מחוברים לכל אזור בנפרד (כדי שלא יצטברו מאזינים בין פתיחות של הטופס)
+  const wireStepper = (el) => el && el.addEventListener("click", (e) => {
+    const q = e.target.closest("[data-q]");
+    if (!q || !el.contains(q)) return;
+    const input = $("input", q.closest(".qty-stepper"));
+    input.value = Math.max(1, (parseInt(input.value) || 1) + Number(q.dataset.q));
+  });
+  wireStepper(itemsWrap);
+  wireStepper($("#f-qty-stepper"));
   $("#save-order").addEventListener("click", () => {
-    const title = getRichValue("f-title");
-    if (!title) { toast("צריך להזין שם פריט"); return; }
-    const payload = {
+    const base = {
       heading: $("#f-heading").value.trim(),
-      title,
       category: selCategory,
-      qty: parseInt($("#f-qty").value) || 1,
       buildingId: $("#f-building").value || null,
       floorId: $("#f-floor").value || null,
       notes: getRichValue("f-notes"),
       budgetCode: $("#f-budget").value.trim(),
+      urgency: readUrgencyField("f-urgency"),
     };
-    if (order) { Store.updateOrder(order.id, payload); toast("עודכן"); }
-    else { Store.addOrder(payload); toast("נוסף לרשימת ההזמנות"); }
+    if (order) {
+      const title = getRichValue("f-title");
+      if (!title) { toast("צריך להזין שם פריט"); return; }
+      Store.updateOrder(order.id, { ...base, title, qty: Math.max(1, parseInt($("#f-qty").value) || 1) });
+      toast("עודכן");
+    } else {
+      const rows = $$(".item-row", itemsWrap)
+        .map((r) => ({ name: $(".item-name", r).value.trim(), qty: Math.max(1, parseInt($(".item-qty", r).value) || 1) }))
+        .filter((r) => r.name);
+      if (!rows.length) { toast("צריך להזין לפחות פריט אחד"); return; }
+      const now = Date.now();
+      // createdAt יורד לפי הסדר שהוקלד, כדי שהפריט הראשון יופיע ראשון ברשימה
+      rows.forEach((r, i) => Store.addOrder({ ...base, title: r.name, qty: r.qty, createdAt: now + (rows.length - i) }));
+      toast(rows.length > 1 ? `נוספו ${rows.length} פריטים להזמנה` : "נוסף לרשימת ההזמנות");
+    }
     closeSheet();
     renderOrders();
   });
@@ -1415,7 +1821,7 @@ function renderBuildings() {
   list.innerHTML = buildings.map((b, idx) => `
     <div class="building-block" data-id="${b.id}" data-reorder-item>
       <div class="building-head" data-action="toggle">
-        <div class="name"><span class="drag-handle">⠿</span> 🏢 ${esc(b.name)}</div>
+        <div class="name">🏢 ${esc(b.name)}</div>
         <div class="building-order-btns">
           <button type="button" class="order-btn" data-action="move-up" title="הזז למעלה" ${idx === 0 ? "disabled" : ""}>⬆</button>
           <button type="button" class="order-btn" data-action="move-down" title="הזז למטה" ${idx === buildings.length - 1 ? "disabled" : ""}>⬇</button>
@@ -1623,7 +2029,7 @@ function locationDetailHTML(buildingId, floorId) {
         <div class="loc-mini-card" data-open-order="${o.id}" style="cursor:pointer">
           ${o.heading ? `<div class="card-heading">${esc(o.heading)}</div>` : ""}
           <b class="rich-content">${renderRichText(o.title)}</b>
-          <div class="sub">${esc(ORDER_STEPS.find((s) => s.key === o.status).label)} · ${esc(o.category)}</div>
+          <div class="sub">${esc(orderStepLabel(o.status))} · ${esc(o.category)}</div>
         </div>
       `).join("") : `<p style="color:var(--text-dim);font-size:13.5px;margin-top:10px">אין הזמנות במיקום זה.</p>`}
     </div>

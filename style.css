@@ -354,13 +354,17 @@ main {
   cursor: pointer;
 }
 .building-head .name {
+  flex: 1;          /* שם הבניין תופס את כל המקום הפנוי, כך שהחיצים והחץ תמיד באותו מקום קבוע */
+  min-width: 0;
   font-weight: 700;
   font-size: 15px;
   color: var(--text);
+  overflow-wrap: anywhere;
 }
+.building-head .arrow { flex-shrink: 0; margin-inline-start: 10px; }
 .building-head .arrow { transition: transform 0.15s; color: var(--text-dim); }
 .building-block.open .arrow { transform: rotate(180deg); }
-.building-order-btns { display: flex; gap: 4px; margin-inline-start: 8px; }
+.building-order-btns { display: flex; gap: 4px; margin-inline-start: 8px; flex-shrink: 0; }
 .building-order-btns .order-btn {
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -492,7 +496,7 @@ nav.bottomnav button.active { color: var(--amber-text); font-weight: 600; }
   color: var(--text-dim);
   margin-bottom: 5px;
 }
-input[type="text"], input[type="number"], textarea, select {
+input[type="text"], input[type="number"], input[type="date"], textarea, select {
   width: 100%;
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -1088,3 +1092,68 @@ input:focus, textarea:focus, select:focus {
   letter-spacing: 0.2px;
   margin-bottom: 4px;
 }
+
+/* ---------- שורת כלים במשימות ---------- */
+.tools-row { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+.sort-btn.active { background: var(--amber-tint); color: var(--amber-text); border-color: var(--amber); }
+.chip.chip-edit { border-style: dashed; color: var(--text-dim); }
+
+/* ---------- תיקיות משימות ---------- */
+.task-group { margin-bottom: 12px; }
+.task-group-head {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.tg-arrow { color: var(--text-dim); transition: transform 0.15s; flex-shrink: 0; }
+.task-group.collapsed .tg-arrow { transform: rotate(90deg); }
+.tg-name { flex: 1; min-width: 0; font-weight: 700; font-size: 15px; color: var(--text); overflow-wrap: anywhere; }
+.tg-count {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 999px;
+  font-size: 12px; padding: 1px 9px; color: var(--text-dim); flex-shrink: 0;
+}
+.tg-actions { display: flex; gap: 2px; flex-shrink: 0; }
+.tg-actions button { background: none; border: none; font-size: 16px; padding: 4px 6px; cursor: pointer; color: var(--text); }
+.task-group-body { padding-top: 8px; }
+.task-group.collapsed .task-group-body { display: none; }
+.tg-empty { color: var(--text-dim); font-size: 13px; margin: 6px 4px 2px; }
+.task-loose-title { font-size: 12.5px; color: var(--text-dim); margin: 14px 2px 8px; font-weight: 700; }
+
+/* ---------- סימון וי לכל שורה במשימה ---------- */
+.chk-line { display: flex; align-items: flex-start; gap: 10px; padding: 5px 0; cursor: pointer; }
+.chk-line .rich-content { flex: 1; min-width: 0; }
+.chk-box { width: 22px; height: 22px; margin: 1px 0 0; accent-color: var(--amber); flex-shrink: 0; cursor: pointer; }
+.chk-line.done .rich-content { color: var(--text-dim); opacity: 0.5; }
+.tag.chk-progress { background: var(--amber-tint); color: var(--amber-text); border-color: var(--amber-tint); }
+.card-actions button.on { background: var(--amber-tint); color: var(--amber-text); }
+
+/* ---------- תאריך יצירה/עריכה בתחתית כרטיס ---------- */
+.card-stamp { font-size: 11px; color: var(--text-dim); margin-top: 8px; }
+
+/* ---------- שורות פריט בהזמנה + כמות ---------- */
+.item-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.item-row .item-name { flex: 1; min-width: 0; }
+.qty-stepper { display: inline-flex; align-items: stretch; direction: ltr; flex-shrink: 0; }
+.qty-stepper button {
+  width: 36px; background: var(--surface-2); border: 1px solid var(--border);
+  font-size: 20px; line-height: 1; color: var(--text); cursor: pointer; padding: 0;
+}
+.qty-stepper button:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.qty-stepper button:last-child { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.qty-stepper button:active { background: var(--amber-tint); }
+.qty-stepper input[type="number"] {
+  width: 52px; text-align: center; border-radius: 0; padding: 10px 2px; font-size: 16px;
+  border-left: none; border-right: none; -moz-appearance: textfield;
+}
+.item-row .item-del { background: none; border: none; color: var(--red); font-size: 18px; padding: 6px; cursor: pointer; }
+
+/* ---------- מנהל רשימה (תיקיות / שלבי הזמנה) ---------- */
+.mgr-row { gap: 10px; }
+.mgr-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.mgr-name small { color: var(--text-dim); }
+.mgr-btns { display: flex; gap: 2px; flex-shrink: 0; }
+.mgr-btn { background: none; border: none; font-size: 17px; padding: 6px; cursor: pointer; }

@@ -32,6 +32,15 @@ function defaultData() {
     locationNotes: [
       // { id, buildingId, floorId (null = building-level note), text, createdAt, order }
     ],
+    // שלבי הזמנה (ניתנים לעריכה: הוספה/הסרה/שינוי שם/סדר)
+    orderStatuses: [
+      { key: "pending", label: "לא הוזמן" },
+      { key: "ordered", label: "הוזמן" },
+      { key: "arrived", label: "הגיע" },
+      { key: "installed", label: "הותקן" },
+    ],
+    // תיקיות משימות: { id, name, order, collapsed }
+    taskGroups: [],
     uiPrefs: {
       // per-list sort mode, persisted across sessions
       tasksSort: "default",
@@ -52,6 +61,9 @@ function migrate(data) {
   const d = Object.assign(defaultData(), data || {});
   d.uiPrefs = Object.assign(defaultData().uiPrefs, d.uiPrefs || {});
   if (!Array.isArray(d.locationNotes)) d.locationNotes = [];
+  if (!Array.isArray(d.orderStatuses) || !d.orderStatuses.length) d.orderStatuses = defaultData().orderStatuses;
+  if (!Array.isArray(d.taskGroups)) d.taskGroups = [];
+  withOrder(d.taskGroups);
 
   // schemaVersion 1 -> 2: add order fields, reminder/hold fields to tasks, floor order
   withOrder(d.buildings);
@@ -294,16 +306,21 @@ const Store = {
       dueAt: null,
       reminder: null,
       urgency: null, // optional numeric urgency rank; lower = more urgent
+      groupId: null,      // תיקייה (Store.data.taskGroups)
+      checkMode: false,   // מצב סימון וי לכל שורה
+      checkDone: [],      // טקסט השורות שסומנו
+      editedAt: null,     // זמן העריכה האחרונה של התוכן (תאריך היצירה נשאר ב-createdAt)
       ...task,
     };
     this.data.tasks.unshift(t);
     this.persist();
     return t;
   },
-  updateTask(id, patch) {
+  // opts.touch=false: לא לעדכן את updatedAt (למשל סימון וי — כדי שהמשימה לא "תקפוץ" ברשימה)
+  updateTask(id, patch, opts = {}) {
     const t = this.data.tasks.find((x) => x.id === id);
     if (t) {
-      Object.assign(t, patch, { updatedAt: Date.now() });
+      Object.assign(t, patch, opts.touch === false ? {} : { updatedAt: Date.now() });
     }
     this.persist();
     return t;
@@ -364,8 +381,9 @@ const Store = {
       buildingId: null,
       floorId: null,
       budgetCode: "",
-      status: "pending", // pending -> ordered -> arrived -> installed
+      status: (this.data.orderStatuses[0] && this.data.orderStatuses[0].key) || "pending",
       notes: "",
+      urgency: null,
       createdAt: Date.now(),
       order: nextOrder(this.data.orders),
       ...order,
@@ -434,6 +452,74 @@ const Store = {
   },
 
   // ---------- Backup / restore (manual multi-device sync) ----------
+  // ---------- Order statuses (editable) ----------
+  addOrderStatus(label) {
+    const l = (label || "").trim();
+    if (!l) return null;
+    const st = { key: "s" + uid(), label: l };
+    this.data.orderStatuses.push(st);
+    this.persist();
+    return st;
+  },
+  renameOrderStatus(key, label) {
+    const st = this.data.orderStatuses.find((x) => x.key === key);
+    const l = (label || "").trim();
+    if (st && l) st.label = l;
+    this.persist();
+  },
+  usageOfOrderStatus(key) { return this.data.orders.filter((o) => o.status === key); },
+  // הזמנות ששייכות לשלב שנמחק עוברות לשלב הראשון שנשאר
+  deleteOrderStatus(key) {
+    if (this.data.orderStatuses.length <= 1) return false;
+    this.data.orderStatuses = this.data.orderStatuses.filter((x) => x.key !== key);
+    const first = this.data.orderStatuses[0].key;
+    this.data.orders.forEach((o) => { if (o.status === key) o.status = first; });
+    this.persist();
+    return true;
+  },
+  moveOrderStatus(key, dir) {
+    const arr = this.data.orderStatuses;
+    const i = arr.findIndex((x) => x.key === key), j = i + dir;
+    if (i < 0 || j < 0 || j >= arr.length) return;
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+    this.persist();
+  },
+
+  // ---------- Task groups (folders) ----------
+  addTaskGroup(name) {
+    const n = (name || "").trim();
+    if (!n) return null;
+    const g = { id: uid(), name: n, order: nextOrder(this.data.taskGroups), collapsed: false };
+    this.data.taskGroups.push(g);
+    this.persist();
+    return g;
+  },
+  renameTaskGroup(id, name) {
+    const g = this.data.taskGroups.find((x) => x.id === id);
+    const n = (name || "").trim();
+    if (g && n) g.name = n;
+    this.persist();
+  },
+  toggleTaskGroup(id) {
+    const g = this.data.taskGroups.find((x) => x.id === id);
+    if (g) g.collapsed = !g.collapsed;
+    this.persist();
+  },
+  moveTaskGroup(id, dir) {
+    const arr = [...this.data.taskGroups].sort((a, b) => a.order - b.order);
+    const i = arr.findIndex((x) => x.id === id), j = i + dir;
+    if (i < 0 || j < 0 || j >= arr.length) return;
+    const t = arr[i].order; arr[i].order = arr[j].order; arr[j].order = t;
+    this.persist();
+  },
+  // mode: "ungroup" (המשימות נשארות, בלי תיקייה) או "delete" (נמחקות גם המשימות)
+  deleteTaskGroup(id, mode = "ungroup") {
+    if (mode === "delete") this.data.tasks = this.data.tasks.filter((t) => t.groupId !== id);
+    else this.data.tasks.forEach((t) => { if (t.groupId === id) t.groupId = null; });
+    this.data.taskGroups = this.data.taskGroups.filter((g) => g.id !== id);
+    this.persist();
+  },
+
   hasContent() { return dataHasContent(this.data); },
   counts() {
     const d = this.data;
