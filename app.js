@@ -1,5 +1,5 @@
 // app.js — ניווט, רינדור, וטיפול באירועים
-const APP_VERSION = "2.6.0";
+const APP_VERSION = "2.7.0";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -632,7 +632,7 @@ function taskUrgency(t) {
 // ---------------- Building/Floor <select> builder ----------------
 function buildingSelectHTML(selectedBuildingId, selectedFloorId) {
   const buildings = Store.data.buildings;
-  let html = `<div class="field-row">
+  let html = `<div class="loc-box"><div class="loc-box-title">📍 מיקום</div><div class="field-row">
     <div class="field">
       <label>בניין (אופציונלי)</label>
       <select id="f-building">
@@ -646,7 +646,7 @@ function buildingSelectHTML(selectedBuildingId, selectedFloorId) {
         <option value="">— ללא —</option>
       </select>
     </div>
-  </div>`;
+  </div></div>`;
   return html;
 }
 function wireFloorSelect(selectedBuildingId, selectedFloorId) {
@@ -1241,16 +1241,16 @@ function taskFormHTML(task, presetGroupId) {
   task = task || { title: "", type: Store.data.taskTypes[0] || "", priority: "normal", buildingId: "", floorId: "", budgetCode: "", urgency: null, groupId: presetGroupId || "" };
   return `
     <h3>${isEdit ? "עריכת משימה" : "משימה חדשה"}</h3>
-    <div class="field">
-      <label>כותרת (אופציונלי — תופיע בקטן מעל המשימה)</label>
+    <div class="field field-heading">
+      <label>🔖 כותרת (אופציונלי — תופיע בקטן מעל המשימה)</label>
       <input type="text" id="f-heading" value="${esc(task.heading || "")}" placeholder="לדוגמה: לוח ראשי">
     </div>
     <div class="field">
       <label>תיאור המשימה</label>
       ${richEditorHTML("f-title", "לדוגמה: להתקין לוח חשמל בקומה 3", task.title)}
     </div>
-    <div class="field">
-      <label>תיקייה</label>
+    <div class="field field-folder">
+      <label>📁 תיקייה</label>
       <select id="f-group">${groupOptionsHTML(task.groupId || "")}</select>
     </div>
     <div class="field">
@@ -1525,6 +1525,15 @@ function wireCardActions(container, kind) {
 // ==========================================================
 // שלבי ההזמנה ניתנים לעריכה (עוד ← שלבי הזמנה, או כפתור "✏️ שלבים" בשורת הסינון)
 function orderSteps() { return Store.data.orderStatuses; }
+const orderHasItems = (o) => Array.isArray(o.items) && o.items.length > 0;
+function orderItemsHTML(o) {
+  return `<div class="order-items">${o.items.map((it) => `
+    <label class="oi-row ${it.done ? "done" : ""}" data-item="${esc(it.id)}">
+      <input type="checkbox" class="oi-box" ${it.done ? "checked" : ""}>
+      <span class="oi-name">${esc(it.name)}</span>
+      <span class="oi-qty">×${it.qty || 1}</span>
+    </label>`).join("")}</div>`;
+}
 function orderStepLabel(key) { const s = orderSteps().find((x) => x.key === key); return s ? s.label : ""; }
 function renderOrderStatusChips() {
   const wrap = $("#orders-status-filter");
@@ -1597,10 +1606,11 @@ function renderOrders() {
       ${o.heading ? `<div class="card-heading">${esc(o.heading)}</div>` : ""}
       <div class="card-top">
         <span class="drag-handle">⠿</span>
-        <div class="card-title rich-content">${renderRichText(o.title)} ${o.qty > 1 ? `<span class="mono" style="color:var(--text-dim);font-size:13px">×${o.qty}</span>` : ""}</div>
+        <div class="card-title rich-content">${orderHasItems(o) ? orderItemsHTML(o) : `${renderRichText(o.title)} ${o.qty > 1 ? `<span class="mono" style="color:var(--text-dim);font-size:13px">×${o.qty}</span>` : ""}`}</div>
       </div>
       <div class="card-meta">
         <span class="tag type">${esc(o.category)}</span>
+        ${orderHasItems(o) ? `<span class="tag chk-progress">☑ ${o.items.filter((i) => i.done).length}/${o.items.length}</span>` : ""}
         ${loc ? `<span class="tag loc">📍 ${esc(loc)}</span>` : ""}
         ${urgencyBadgeHTML(o)}
       </div>
@@ -1620,6 +1630,16 @@ async function ordersClickHandler(e) {
   const card = e.target.closest(".card");
   if (!card) return;
   const id = card.dataset.id;
+  if (e.target.classList.contains("oi-box")) {
+    const o = Store.data.orders.find((x) => x.id === id);
+    const row = e.target.closest(".oi-row");
+    if (o && orderHasItems(o) && row) {
+      Store.updateOrder(id, { items: o.items.map((it) => it.id === row.dataset.item ? { ...it, done: !it.done } : it) });
+    }
+    renderOrders();
+    return;
+  }
+  if (e.target.closest(".oi-row")) return;
   if (e.target.dataset.step) {
     Store.updateOrder(id, { status: e.target.dataset.step });
     renderOrders();
@@ -1657,13 +1677,14 @@ enableLongPressReorder($("#orders-list"), "[data-reorder-item]", (ids) => {
 function orderFormHTML(order) {
   const isEdit = !!order;
   order = order || { title: "", category: Store.data.orderCategories[0] || "", qty: 1, buildingId: "", floorId: "", budgetCode: "", notes: "", urgency: null };
+  const legacy = isEdit && !orderHasItems(order); // הזמנה ישנה: פריט בודד עם כותרת + כמות
   return `
-    <h3>${isEdit ? "עריכת הזמנה" : "פריט חדש להזמנה"}</h3>
-    <div class="field">
-      <label>כותרת (אופציונלי — תופיע בקטן מעל הפריט)</label>
+    <h3>${isEdit ? "עריכת הזמנה" : "הזמנה חדשה"}</h3>
+    <div class="field field-heading">
+      <label>🔖 כותרת (אופציונלי — תופיע בקטן מעל ההזמנה)</label>
       <input type="text" id="f-heading" value="${esc(order.heading || "")}" placeholder="לדוגמה: חומרים לקומה 3">
     </div>
-    ${isEdit ? `
+    ${legacy ? `
     <div class="field">
       <label>מה צריך להזמין</label>
       ${richEditorHTML("f-title", "לדוגמה: כבל NYY 3×2.5", order.title)}
@@ -1676,8 +1697,8 @@ function orderFormHTML(order) {
         <button type="button" data-q="1" aria-label="הוסף">+</button>
       </div>
     </div>` : `
-    <div class="field">
-      <label>פריטים להזמנה — לכל פריט כמות משלו</label>
+    <div class="items-box">
+      <div class="items-box-title">📦 פריטים בהזמנה — לכל פריט כמות משלו</div>
       <div id="f-items"></div>
       <button type="button" class="btn-secondary" id="f-add-item">+ הוספת פריט</button>
     </div>`}
@@ -1687,7 +1708,7 @@ function orderFormHTML(order) {
     </div>
     ${buildingSelectHTML(order.buildingId, order.floorId)}
     <div class="field">
-      <label>הערה (אופציונלי)</label>
+      <label>📝 הערה (אופציונלי)</label>
       ${richEditorHTML("f-notes", "פרטים נוספים...", order.notes)}
     </div>
     ${urgencyFieldHTML("f-urgency", order.urgency)}
@@ -1716,14 +1737,16 @@ function openOrderForm(orderId, presetLocation) {
   });
   // ----- שורות פריט (בהזמנה חדשה): שם + כמות לכל פריט -----
   const itemsWrap = $("#f-items");
-  const addItemRow = (focus) => {
+  const addItemRow = (focus, item) => {
     const row = document.createElement("div");
     row.className = "item-row";
+    row.dataset.itemId = (item && item.id) || ("i" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+    row.dataset.done = item && item.done ? "1" : "";
     row.innerHTML = `
-      <input type="text" class="item-name" placeholder="שם הפריט">
+      <input type="text" class="item-name" placeholder="שם הפריט" value="${esc((item && item.name) || "")}">
       <div class="qty-stepper">
         <button type="button" data-q="-1" aria-label="הפחת">−</button>
-        <input type="number" class="item-qty" value="1" min="1" inputmode="numeric">
+        <input type="number" class="item-qty" value="${(item && item.qty) || 1}" min="1" inputmode="numeric">
         <button type="button" data-q="1" aria-label="הוסף">+</button>
       </div>
       <button type="button" class="item-del" aria-label="הסר פריט">✕</button>`;
@@ -1731,7 +1754,8 @@ function openOrderForm(orderId, presetLocation) {
     if (focus) $(".item-name", row).focus();
   };
   if (itemsWrap) {
-    addItemRow(false);
+    if (order && orderHasItems(order)) order.items.forEach((it) => addItemRow(false, it));
+    else addItemRow(false);
     $("#f-add-item").addEventListener("click", () => addItemRow(true));
     itemsWrap.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && e.target.classList.contains("item-name")) { e.preventDefault(); addItemRow(true); }
@@ -1764,20 +1788,21 @@ function openOrderForm(orderId, presetLocation) {
       budgetCode: $("#f-budget").value.trim(),
       urgency: readUrgencyField("f-urgency"),
     };
-    if (order) {
+    const readRows = () => $$(".item-row", itemsWrap)
+      .map((r) => ({ id: r.dataset.itemId, name: $(".item-name", r).value.trim(), qty: Math.max(1, parseInt($(".item-qty", r).value) || 1), done: !!r.dataset.done }))
+      .filter((r) => r.name);
+    if (order && !itemsWrap) {
+      // הזמנה ישנה (פריט בודד)
       const title = getRichValue("f-title");
       if (!title) { toast("צריך להזין שם פריט"); return; }
       Store.updateOrder(order.id, { ...base, title, qty: Math.max(1, parseInt($("#f-qty").value) || 1) });
       toast("עודכן");
     } else {
-      const rows = $$(".item-row", itemsWrap)
-        .map((r) => ({ name: $(".item-name", r).value.trim(), qty: Math.max(1, parseInt($(".item-qty", r).value) || 1) }))
-        .filter((r) => r.name);
-      if (!rows.length) { toast("צריך להזין לפחות פריט אחד"); return; }
-      const now = Date.now();
-      // createdAt יורד לפי הסדר שהוקלד, כדי שהפריט הראשון יופיע ראשון ברשימה
-      rows.forEach((r, i) => Store.addOrder({ ...base, title: r.name, qty: r.qty, createdAt: now + (rows.length - i) }));
-      toast(rows.length > 1 ? `נוספו ${rows.length} פריטים להזמנה` : "נוסף לרשימת ההזמנות");
+      const items = readRows();
+      if (!items.length) { toast("צריך להזין לפחות פריט אחד"); return; }
+      const payload = { ...base, title: items.map((i) => i.name).join(", "), qty: 1, items };
+      if (order) { Store.updateOrder(order.id, payload); toast("עודכן"); }
+      else { Store.addOrder(payload); toast(items.length > 1 ? `ההזמנה נוספה (${items.length} פריטים)` : "נוסף לרשימת ההזמנות"); }
     }
     closeSheet();
     renderOrders();
