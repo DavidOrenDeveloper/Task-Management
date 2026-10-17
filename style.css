@@ -654,11 +654,11 @@ input:focus, textarea:focus, select:focus {
   padding: 0;
 }
 .rich-editor {
-  min-height: 48px;
-  max-height: 280px;
+  min-height: 140px;            /* גדול יותר עוד לפני שכותבים — ברור שזה מקום הכתיבה */
+  max-height: 340px;
   overflow-y: auto;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
+  background: #ffffff;          /* רקע לבן, שונה משאר השדות האפורים */
+  border: 2px solid var(--amber);
   color: var(--text);
   border-radius: var(--radius-sm);
   padding: 12px 12px;
@@ -667,7 +667,7 @@ input:focus, textarea:focus, select:focus {
   line-height: 1.5;
   direction: rtl;
 }
-.rich-editor:focus { outline: 2px solid var(--amber); outline-offset: 1px; }
+.rich-editor:focus { outline: none; border-color: var(--amber); box-shadow: 0 0 0 3px var(--amber-tint); }
 .rich-editor:empty:before {
   content: attr(data-placeholder);
   color: var(--text-dim);
@@ -1157,3 +1157,58 @@ input:focus, textarea:focus, select:focus {
 .mgr-name small { color: var(--text-dim); }
 .mgr-btns { display: flex; gap: 2px; flex-shrink: 0; }
 .mgr-btn { background: none; border: none; font-size: 17px; padding: 6px; cursor: pointer; }
+
+/* ---------- הבחנה ברורה בין סוגי שדות בטפסים ---------- */
+/* כותרת: מסגרת שחורה ומודגשת */
+.field-heading label { color: var(--text); font-weight: 800; }
+.field-heading input {
+  background: #fff;
+  border: 2px solid var(--text);
+  font-weight: 800;
+}
+.field-heading input:focus { outline: none; box-shadow: 0 0 0 3px rgba(27, 29, 33, 0.15); }
+/* תיקייה: כחול */
+.field-folder label { color: var(--blue); font-weight: 800; }
+.field-folder select {
+  background: var(--blue-tint);
+  border: 2px solid var(--blue);
+  color: #1e3a8a;
+}
+/* מיקום: ירוק */
+.loc-box {
+  border: 2px solid var(--green);
+  background: #f3fcf6;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px 0;
+  margin-bottom: 12px;
+}
+.loc-box-title { font-size: 12.5px; font-weight: 800; color: var(--green); margin-bottom: 6px; }
+.loc-box .field label { color: #166534; }
+/* פריטי הזמנה: קופסה משלהם */
+.items-box {
+  border: 2px solid var(--border);
+  background: #fafbfc;
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  margin-bottom: 12px;
+}
+.items-box-title { font-size: 12.5px; font-weight: 800; color: var(--text); margin-bottom: 8px; }
+
+/* ---------- פריטי הזמנה בכרטיס: וי + שם + כמות בצד ---------- */
+.order-items { display: flex; flex-direction: column; }
+.oi-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px dashed var(--border); cursor: pointer; }
+.oi-row:last-child { border-bottom: none; }
+.oi-box { width: 22px; height: 22px; accent-color: var(--green); flex-shrink: 0; cursor: pointer; }
+.oi-name { flex: 1; min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+.oi-qty {
+  flex-shrink: 0; min-width: 38px; text-align: center;
+  background: var(--blue-tint); border: 1px solid var(--blue); border-radius: 999px;
+  font-size: 14px; font-weight: 800; padding: 1px 9px; color: var(--blue); direction: ltr;
+}
+/* פריט שסומן: פס על גבי הפריט + צבע בהיר */
+.oi-row.done .oi-name, .oi-row.done .oi-qty {
+  text-decoration: line-through;
+  text-decoration-thickness: 2px;
+  color: var(--text-dim);
+  opacity: 0.55;
+}

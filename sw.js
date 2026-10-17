@@ -2,7 +2,7 @@
 // חשוב: בכל פעם שמעדכנים את האפליקציה, יש להעלות את מספר CACHE_VERSION למטה.
 // זה מה שגורם לטלפונים להוריד את הגרסה החדשה בפתיחה הבאה.
 
-const CACHE_VERSION = "v2.7.0";
+const CACHE_VERSION = "v2.7.1";
 const CACHE_NAME = `elec-site-app-${CACHE_VERSION}`;
 
 const APP_SHELL = [
@@ -85,7 +85,9 @@ self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
   event.respondWith(
-    fetch(event.request)
+    // cache: "no-cache" — תמיד לאמת מול השרת, כדי שקובץ ישן מהמטמון של הדפדפן/GitHub Pages
+    // (שמחזיק קבצים כ-10 דקות) לא יישאר "תקוע" אחרי עדכון
+    fetch(event.request, { cache: "no-cache" })
       .then((response) => {
         if (response && response.status === 200) {
           const clone = response.clone();

@@ -1,5 +1,5 @@
 // app.js — ניווט, רינדור, וטיפול באירועים
-const APP_VERSION = "2.7.0";
+const APP_VERSION = "2.7.1";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -1246,7 +1246,7 @@ function taskFormHTML(task, presetGroupId) {
       <input type="text" id="f-heading" value="${esc(task.heading || "")}" placeholder="לדוגמה: לוח ראשי">
     </div>
     <div class="field">
-      <label>תיאור המשימה</label>
+      <label>📝 תיאור המשימה</label>
       ${richEditorHTML("f-title", "לדוגמה: להתקין לוח חשמל בקומה 3", task.title)}
     </div>
     <div class="field field-folder">
