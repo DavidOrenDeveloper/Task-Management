@@ -99,8 +99,17 @@ function load() {
   }
 }
 
+// האם השמירה האחרונה למכשיר הצליחה (localStorage יכול להיכשל: אחסון מלא / מצב פרטי)
+let LAST_SAVE_OK = true;
+function storageSaveOk() { return LAST_SAVE_OK; }
 function save(data) {
-  localStorage.setItem(DB_KEY, JSON.stringify(data));
+  let ok = true;
+  try { localStorage.setItem(DB_KEY, JSON.stringify(data)); }
+  catch (e) { ok = false; console.error("[storage] save failed:", e); }
+  if (ok !== LAST_SAVE_OK) {
+    LAST_SAVE_OK = ok;
+    try { window.dispatchEvent(new Event("save-status")); } catch (e) { /* ignore */ }
+  }
   // מאפשר לגיבוי האוטומטי לענן לדעת שהיה שינוי (ראה app.js → Backup)
   try { window.dispatchEvent(new Event("store-changed")); } catch (e) { /* ignore */ }
 }
@@ -324,6 +333,12 @@ const Store = {
     }
     this.persist();
     return t;
+  },
+  // מעביר כמה משימות בבת אחת לתיקייה (groupId=null → ללא תיקייה). לא נוגע ב-updatedAt כדי שלא "יקפצו" ברשימה.
+  moveTasksToGroup(ids, groupId) {
+    const set = new Set(ids);
+    this.data.tasks.forEach((t) => { if (set.has(t.id)) t.groupId = groupId || null; });
+    this.persist();
   },
   deleteTask(id) {
     this.data.tasks = this.data.tasks.filter((x) => x.id !== id);
