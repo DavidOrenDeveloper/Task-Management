@@ -1,5 +1,5 @@
 // app.js — ניווט, רינדור, וטיפול באירועים
-const APP_VERSION = "2.7.4";
+const APP_VERSION = "2.7.5";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -315,12 +315,12 @@ const state = {
 
 // ---------------- Toast ----------------
 let toastTimer;
-function toast(msg) {
+function toast(msg, ms = 1800) {
   const el = $("#toast");
   el.textContent = msg;
   el.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove("show"), 1800);
+  toastTimer = setTimeout(() => el.classList.remove("show"), ms);
 }
 
 // ==========================================================
@@ -1347,6 +1347,7 @@ function openTaskForm(taskId, presetLocation, presetGroupId) {
       toast("המשימה נוספה");
     }
     syncCloudReminder(savedId);
+    if (dueAt) toast("⏰ תזכורת בעוד " + formatTimeLeft(dueAt - Date.now()), 4500);
     closeSheet();
     renderTasks();
     updateUrgentBanner();
@@ -1365,6 +1366,17 @@ function openTaskForm(taskId, presetLocation, presetGroupId) {
       }
     });
   }
+}
+
+function formatTimeLeft(ms) {
+  if (ms <= 0) return "פחות מדקה (הזמן כבר עבר)";
+  const mins = Math.max(1, Math.round(ms / 60000));
+  const d = Math.floor(mins / 1440), h = Math.floor((mins % 1440) / 60), m = mins % 60;
+  const parts = [];
+  if (d) parts.push(d === 1 ? "יום" : d + " ימים");
+  if (h) parts.push(h === 1 ? "שעה" : h + " שעות");
+  if (m) parts.push(m === 1 ? "דקה" : m + " דקות");
+  return parts.length > 1 ? parts.slice(0, -1).join(", ") + " ו" + parts[parts.length - 1] : parts[0];
 }
 
 async function ensureNotificationPermission() {
@@ -3046,6 +3058,7 @@ function updateUrgentBanner() {
     banner.classList.remove("show");
   }
 }
+let bannerIdx = 0;
 $("#urgent-banner").addEventListener("click", () => {
   switchView("tasks");
   state.taskStatusFilter = "all";
@@ -3055,9 +3068,13 @@ $("#urgent-banner").addEventListener("click", () => {
   state.tasksSort = "due"; Store.setUiPref("tasksSort", "due");
   renderTasks();
   setTimeout(() => {
-    const el = document.querySelector("#tasks-list .urgency-overdue") || document.querySelector("#tasks-list .urgency-soon");
-    if (el) { el.scrollIntoView({ block: "center", behavior: "smooth" }); el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 2500); }
-    else window.scrollTo({ top: 0 });
+    const els = [...document.querySelectorAll("#tasks-list .urgency-overdue")];
+    const list = els.length ? els : [...document.querySelectorAll("#tasks-list .urgency-soon")];
+    if (!list.length) { window.scrollTo({ top: 0 }); return; }
+    const el = list[bannerIdx % list.length];
+    bannerIdx++;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 2500);
   }, 80);
 });
 
