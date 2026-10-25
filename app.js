@@ -1,5 +1,5 @@
 // app.js — ניווט, רינדור, וטיפול באירועים
-const APP_VERSION = "2.7.3";
+const APP_VERSION = "2.7.4";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -3054,6 +3054,11 @@ $("#urgent-banner").addEventListener("click", () => {
   $$("#tasks-status-filter .chip").forEach((x) => x.classList.toggle("active", x.dataset.status === "all"));
   state.tasksSort = "due"; Store.setUiPref("tasksSort", "due");
   renderTasks();
+  setTimeout(() => {
+    const el = document.querySelector("#tasks-list .urgency-overdue") || document.querySelector("#tasks-list .urgency-soon");
+    if (el) { el.scrollIntoView({ block: "center", behavior: "smooth" }); el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 2500); }
+    else window.scrollTo({ top: 0 });
+  }, 80);
 });
 
 // ==========================================================
