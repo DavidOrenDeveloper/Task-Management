@@ -1,5 +1,5 @@
 // app.js — ניווט, רינדור, וטיפול באירועים
-const APP_VERSION = "2.7.2";
+const APP_VERSION = "2.7.3";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -2822,6 +2822,19 @@ $("#cloud-status-row").addEventListener("click", async () => {
   }
   if (window.CloudSync && window.CloudSync.enabled) {
     await subscribeToPush();
+    // אבחון: סנכרון כל התזכורות הפעילות ובדיקה כמה באמת נשמרו בענן
+    const cs = window.CloudSync;
+    const active = Store.data.tasks.filter((t) => t.dueAt && t.reminder && t.reminder.enabled && t.status !== "done" && !t.hold);
+    const timeout = (ms) => new Promise((_, rej) => setTimeout(() => rej(new Error("timeout " + ms + "ms")), ms));
+    let report;
+    try {
+      await Promise.race([Promise.all(active.map((t) => cs.upsertReminder(Object.assign({}, t, { locationLabel: locationLabel(t) || "" })))), timeout(10000)]);
+      const n = await Promise.race([cs.countCloudReminders(), timeout(10000)]);
+      report = `תזכורות פעילות בטלפון: ${active.length}\nתזכורות שנמצאו בענן: ${n}` + (cs.writeError ? `\nשגיאה: ${cs.writeError}` : "");
+    } catch (e) {
+      report = `תזכורות פעילות בטלפון: ${active.length}\nהכתיבה/קריאה מהענן נכשלה: ${(e && (e.code || e.message)) || e}` + (cs.writeError ? `\n${cs.writeError}` : "");
+    }
+    await alertDialog("אבחון תזכורות בענן", report);
   } else {
     await alertDialog("תזכורות בענן", "כדי לאפשר תזכורות אמיתיות גם כשהאפליקציה סגורה, יש להגדיר חיבור חינמי ל-Firebase ול-GitHub Actions. ההוראות המלאות נמצאות בקובץ SETUP-CLOUD.md שצורף לאפליקציה.");
   }
@@ -3036,6 +3049,8 @@ function updateUrgentBanner() {
 $("#urgent-banner").addEventListener("click", () => {
   switchView("tasks");
   state.taskStatusFilter = "all";
+  state.taskTypeFilter = "all"; state.taskDateFrom = null; state.taskDateTo = null;
+  Store.data.taskGroups.forEach((g) => { if (g.collapsed) Store.toggleTaskGroup(g.id); });
   $$("#tasks-status-filter .chip").forEach((x) => x.classList.toggle("active", x.dataset.status === "all"));
   state.tasksSort = "due"; Store.setUiPref("tasksSort", "due");
   renderTasks();

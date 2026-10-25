@@ -123,27 +123,37 @@ const CloudSync = {
 
   // task: { id, title, dueAt, reminder:{enabled, repeatMinutes, lastFiredAt}, status, hold, locationLabel }
   upsertReminder(task) {
-    if (!this.enabled) return;
-    this._whenReady(async () => {
-      try {
-        const isActive = task.dueAt && task.reminder && task.reminder.enabled && task.status !== "done" && !task.hold;
-        if (!isActive) {
-          await deleteDoc(this._reminderDoc(task.id)).catch(() => {});
-          return;
+    if (!this.enabled) return Promise.resolve();
+    return new Promise((resolve) => {
+      this._whenReady(async () => {
+        try {
+          const isActive = task.dueAt && task.reminder && task.reminder.enabled && task.status !== "done" && !task.hold;
+          if (!isActive) {
+            await deleteDoc(this._reminderDoc(task.id)).catch(() => {});
+          } else {
+            this.writeError = "";
+            await setDoc(this._reminderDoc(task.id), {
+              title: String(task.title || ""),
+              locationLabel: task.locationLabel || "",
+              dueAt: task.dueAt,
+              repeatMinutes: task.reminder.repeatMinutes || null,
+              lastFiredAt: task.reminder.lastFiredAt || null,
+              updatedAt: Date.now(),
+            });
+            this.lastWriteAt = Date.now();
+          }
+        } catch (e) {
+          this._reportWriteError(e, "upsertReminder");
         }
-        this.writeError = "";
-        await setDoc(this._reminderDoc(task.id), {
-          title: task.title,
-          locationLabel: task.locationLabel || "",
-          dueAt: task.dueAt,
-          repeatMinutes: task.reminder.repeatMinutes || null,
-          lastFiredAt: task.reminder.lastFiredAt || null,
-          updatedAt: Date.now(),
-        });
-      } catch (e) {
-        this._reportWriteError(e, "upsertReminder");
-      }
+        resolve();
+      });
     });
+  },
+
+  // אבחון: כמה תזכורות יש בענן בפועל
+  async countCloudReminders() {
+    const snap = await getDocs(collection(this.db, "sites", SITE_ID, "reminders"));
+    return snap.docs.length;
   },
 
   removeReminder(taskId) {
