@@ -1,5 +1,5 @@
 // app.js — ניווט, רינדור, וטיפול באירועים
-const APP_VERSION = "2.9.0";
+const APP_VERSION = "2.7.2";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -309,8 +309,6 @@ const state = {
   ordersUrgencyDir: Store.data.uiPrefs.ordersUrgencyDir || "asc",
   taskDateFrom: null,
   taskDateTo: null,
-  selectMode: false,          // מצב בחירה מרובה במשימות (לחיצה ארוכה על משימה)
-  selectedIds: new Set(),
   locNotesSort: "manual",
   locNotesUrgencyDir: Store.data.uiPrefs.locNotesUrgencyDir || "asc",
 };
@@ -455,11 +453,7 @@ $("#sort-menu-backdrop").addEventListener("click", closeSortMenu);
 // ==========================================================
 // Long-press drag reorder — works on any list of sibling items
 // ==========================================================
-function enableLongPressReorder(container, itemSelector, onReorder, opts = {}) {
-  // opts (אופציונלי) — גרירה אל יעד חיצוני (למשל תיקייה):
-  //   dropSelector: סלקטור של אלמנטים שאפשר לשחרר עליהם
-  //   onDrop(targetEl, draggedId): מחזיר false אם לא טופל (אז נשמר סידור רגיל)
-  //   ghostText(el), onDragStart(el), onDragEnd()
+function enableLongPressReorder(container, itemSelector, onReorder) {
   let pressTimer = null;
   let dragEl = null;
   let startX = 0, startY = 0;
@@ -467,8 +461,6 @@ function enableLongPressReorder(container, itemSelector, onReorder, opts = {}) {
   let dragEndedAt = 0;
   let activePointerId = null;
   let scrollLockPrev = null;
-  let hoverEl = null, ghostEl = null, scrollTimer = null, lastPt = null;
-  const dropSel = opts.dropSelector || null;
 
   // Only direct children count as "this container's" reorderable items. Some lists
   // (e.g. buildings, which contain floors, which are themselves reorderable) nest one
@@ -492,76 +484,21 @@ function enableLongPressReorder(container, itemSelector, onReorder, opts = {}) {
     scrollLockPrev = null;
   }
 
-  function setHover(t) {
-    if (t === hoverEl) return;
-    if (hoverEl) hoverEl.classList.remove("drop-hover");
-    hoverEl = t;
-    if (hoverEl) hoverEl.classList.add("drop-hover");
-  }
-
-  // מיקום הפריט הנגרר ברשימה + זיהוי יעד שחרור (תיקייה) מתחת לאצבע
-  function dragMoveTo(x, y) {
-    lastPt = { x, y };
-    const items = getItems().filter((el) => el !== dragEl);
-    let closest = null, closestOffset = Number.NEGATIVE_INFINITY;
-    items.forEach((el) => {
-      const box = el.getBoundingClientRect();
-      const offset = y - (box.top + box.height / 2);
-      if (offset < 0 && offset > closestOffset) { closestOffset = offset; closest = el; }
-    });
-    if (closest) container.insertBefore(dragEl, closest);
-    else container.appendChild(dragEl);
-    if (dropSel) {
-      if (ghostEl) ghostEl.style.transform = `translate(${x}px, ${y}px)`;
-      const under = document.elementFromPoint(x, y);
-      setHover(under ? under.closest(dropSel) : null);
-    }
-  }
-
-  // גלילה אוטומטית כשגוררים לקצה המסך (כדי להגיע לתיקייה שנמצאת רחוק)
-  function autoScrollTick() {
-    if (!dragEl || !lastPt || hoverEl) return;
-    const h = window.innerHeight;
-    if (lastPt.y < 90) window.scrollBy(0, -14);
-    else if (lastPt.y > h - 100) window.scrollBy(0, 14);
-    else return;
-    dragMoveTo(lastPt.x, lastPt.y);
-  }
-
   function startDrag(el) {
     dragEl = el;
     dragEl.classList.add("dragging");
     container.classList.add("reorder-active");
     lockPageScroll();
-    if (dropSel) {
-      if (opts.onDragStart) opts.onDragStart(el);
-      ghostEl = document.createElement("div");
-      ghostEl.className = "drag-ghost";
-      ghostEl.textContent = opts.ghostText ? opts.ghostText(el) : "";
-      document.body.appendChild(ghostEl);
-      if (lastPt) ghostEl.style.transform = `translate(${lastPt.x}px, ${lastPt.y}px)`;
-      scrollTimer = setInterval(autoScrollTick, 30);
-    }
     if (navigator.vibrate) { try { navigator.vibrate(15); } catch (e) {} }
   }
 
-  function endDragUI() {
-    setHover(null);
-    if (ghostEl) { ghostEl.remove(); ghostEl = null; }
-    clearInterval(scrollTimer); scrollTimer = null;
-    if (dropSel && opts.onDragEnd) opts.onDragEnd();
-  }
-
   function finishDrag() {
-    const el = dragEl, target = hoverEl;
     dragEl.classList.remove("dragging");
     container.classList.remove("reorder-active");
     unlockPageScroll();
-    const ids = getItems().map((x) => x.dataset.id || x.dataset.reorderId);
+    const ids = getItems().map((el) => el.dataset.id || el.dataset.reorderId);
     dragEl = null;
     dragEndedAt = Date.now();
-    endDragUI();
-    if (target && opts.onDrop && opts.onDrop(target, el.dataset.id) !== false) return;
     onReorder(ids);
   }
 
@@ -580,7 +517,6 @@ function enableLongPressReorder(container, itemSelector, onReorder, opts = {}) {
     if (!e.target.closest(".drag-handle")) return;
     moved = false;
     startX = e.clientX; startY = e.clientY;
-    lastPt = { x: startX, y: startY };
     activePointerId = e.pointerId;
     try { e.target.setPointerCapture(e.pointerId); } catch (err) {}
     cancelPress();
@@ -599,12 +535,19 @@ function enableLongPressReorder(container, itemSelector, onReorder, opts = {}) {
   document.addEventListener("pointermove", (e) => {
     if (activePointerId === null || e.pointerId !== activePointerId) return;
     if (!dragEl) {
-      lastPt = { x: e.clientX, y: e.clientY };
       if (Math.abs(e.clientX - startX) > 9 || Math.abs(e.clientY - startY) > 9) { moved = true; cancelPress(); }
       return;
     }
     e.preventDefault();
-    dragMoveTo(e.clientX, e.clientY);
+    const items = getItems().filter((el) => el !== dragEl);
+    let closest = null, closestOffset = Number.NEGATIVE_INFINITY;
+    items.forEach((el) => {
+      const box = el.getBoundingClientRect();
+      const offset = e.clientY - (box.top + box.height / 2);
+      if (offset < 0 && offset > closestOffset) { closestOffset = offset; closest = el; }
+    });
+    if (closest) container.insertBefore(dragEl, closest);
+    else container.appendChild(dragEl);
   }, { passive: false });
 
   function onUp(e) {
@@ -620,7 +563,6 @@ function enableLongPressReorder(container, itemSelector, onReorder, opts = {}) {
 
 // ---------------- Navigation ----------------
 function switchView(name) {
-  if (name !== "tasks" && state.selectMode) exitSelectMode();
   state.view = name;
   $$(".view").forEach((v) => v.classList.remove("active"));
   $(`#view-${name}`).classList.add("active");
@@ -1000,178 +942,6 @@ function sortItems(items, mode, kind) {
   return arr;
 }
 
-// ==========================================================
-// בחירה מרובה במשימות (לחיצה ארוכה) + העברה לתיקייה + גרירה לתיקייה
-// ==========================================================
-function dragTaskIds(id) {
-  return state.selectMode && state.selectedIds.has(id) ? [...state.selectedIds] : [id];
-}
-function moveTasksToGroupUI(ids, gid) {
-  const moving = ids.filter((id) => {
-    const t = Store.data.tasks.find((x) => x.id === id);
-    return t && (t.groupId || null) !== (gid || null);
-  });
-  if (!moving.length) { toast("המשימות כבר נמצאות שם"); return false; }
-  Store.moveTasksToGroup(moving, gid);
-  const g = gid ? Store.data.taskGroups.find((x) => x.id === gid) : null;
-  const where = g ? `לתיקייה "${g.name}"` : "מחוץ לתיקייה";
-  toast(moving.length === 1 ? `המשימה הועברה ${where}` : `${moving.length} משימות הועברו ${where}`);
-  if (state.selectMode) exitSelectMode(); else renderTasks();
-  return true;
-}
-
-function enterSelectMode(firstId) {
-  if (state.selectMode) return;
-  state.selectMode = true;
-  state.selectedIds = new Set(firstId ? [firstId] : []);
-  document.body.classList.add("selecting");
-  pushBackable(exitSelectMode);
-  renderTasks();
-}
-function exitSelectMode() {
-  if (!state.selectMode) return;
-  state.selectMode = false;
-  state.selectedIds.clear();
-  document.body.classList.remove("selecting");
-  popBackableIfMatches(exitSelectMode);
-  renderTasks();
-}
-function toggleSelect(id) {
-  if (state.selectedIds.has(id)) state.selectedIds.delete(id); else state.selectedIds.add(id);
-  const card = $(`#tasks-list .card[data-id="${CSS.escape(id)}"]`);
-  if (card) card.classList.toggle("selected", state.selectedIds.has(id));
-  updateSelectBar();
-}
-function ensureSelectBar() {
-  let bar = $("#select-bar");
-  if (bar) return bar;
-  bar = document.createElement("div");
-  bar.id = "select-bar";
-  bar.className = "select-bar";
-  bar.innerHTML = `
-    <button type="button" data-sel="cancel" class="sel-cancel" aria-label="ביטול בחירה">✕</button>
-    <span class="sel-count" id="sel-count"></span>
-    <button type="button" data-sel="all" class="sel-all">בחר הכל</button>
-    <button type="button" data-sel="move" class="sel-move">📁 העבר לתיקייה</button>`;
-  document.body.appendChild(bar);
-  bar.addEventListener("click", (e) => {
-    const b = e.target.closest("[data-sel]");
-    if (!b) return;
-    const act = b.dataset.sel;
-    if (act === "cancel") exitSelectMode();
-    else if (act === "all") {
-      const ids = $$("#tasks-list .card[data-id]").map((el) => el.dataset.id);
-      const allOn = ids.length && ids.every((id) => state.selectedIds.has(id));
-      ids.forEach((id) => { if (allOn) state.selectedIds.delete(id); else state.selectedIds.add(id); });
-      renderTasks();
-    } else if (act === "move") openMoveToFolderSheet();
-  });
-  return bar;
-}
-function updateSelectBar() {
-  const bar = ensureSelectBar();
-  bar.classList.toggle("show", state.selectMode);
-  const n = state.selectedIds.size;
-  $("#sel-count").textContent = n ? `${n} נבחרו` : "בחר משימות";
-  const mv = bar.querySelector(".sel-move");
-  if (mv) mv.disabled = n === 0;
-}
-function openMoveToFolderSheet() {
-  const ids = [...state.selectedIds].filter((id) => Store.data.tasks.some((t) => t.id === id));
-  if (!ids.length) { toast("לא נבחרו משימות"); return; }
-  const groups = [...Store.data.taskGroups].sort((a, b) => a.order - b.order);
-  openSheet(`
-    <h3>העברה לתיקייה</h3>
-    <p class="hint-text">${ids.length === 1 ? "נבחרה משימה אחת" : `נבחרו ${ids.length} משימות`} — לאיזו תיקייה להעביר?</p>
-    <div>
-      ${groups.map((g) => `
-        <div class="link-row" data-pick="${esc(g.id)}">
-          <span>📁 ${esc(g.name)} <small>(${Store.data.tasks.filter((t) => t.groupId === g.id).length})</small></span><span>›</span>
-        </div>`).join("")}
-      <div class="link-row" data-pick="__none"><span>📤 ללא תיקייה</span><span>›</span></div>
-      <div class="link-row" data-pick="__new"><span>➕ תיקייה חדשה...</span><span>›</span></div>
-    </div>`);
-  $$("[data-pick]", $("#sheet-content")).forEach((row) => row.addEventListener("click", async () => {
-    let gid = row.dataset.pick;
-    if (gid === "__new") {
-      const name = await promptDialog("תיקייה חדשה", "שם התיקייה", "", "לדוגמה: פגישות");
-      if (!name) return;
-      const g = Store.addTaskGroup(name);
-      if (!g) return;
-      gid = g.id;
-    } else if (gid === "__none") gid = null;
-    closeSheet();
-    moveTasksToGroupUI(ids, gid);
-  }));
-}
-
-// גרירה (באמצעות ידית ⠿) אל כותרת תיקייה — משחררים והמשימה/ות עוברות לתיקייה
-function removeNoFolderZone() { const z = $("#drag-nofolder-zone"); if (z) z.remove(); }
-const taskDragOpts = {
-  dropSelector: ".task-group-head, .task-loose-title, .drag-nofolder-zone",
-  ghostText: (el) => {
-    const ids = dragTaskIds(el.dataset.id);
-    if (ids.length > 1) return `${ids.length} משימות`;
-    const t = el.querySelector(".card-title");
-    return ((t && t.textContent) || "").trim().slice(0, 40) || "משימה";
-  },
-  onDragStart: (el) => {
-    const ids = dragTaskIds(el.dataset.id);
-    const inFolder = Store.data.tasks.some((t) => ids.includes(t.id) && t.groupId);
-    if (!inFolder) return;
-    removeNoFolderZone();
-    const z = document.createElement("div");
-    z.id = "drag-nofolder-zone";
-    z.className = "drag-nofolder-zone";
-    z.textContent = "📤 שחרר כאן להוצאה מהתיקייה";
-    document.body.appendChild(z);
-  },
-  onDragEnd: removeNoFolderZone,
-  onDrop: (target, id) => {
-    const head = target.closest(".task-group-head");
-    const gid = head ? head.closest(".task-group").dataset.group : null;
-    return moveTasksToGroupUI(dragTaskIds(id), gid) ? true : false;
-  },
-};
-
-// לחיצה ארוכה על משימה = כניסה למצב בחירה. במצב בחירה, לחיצה על משימה מסמנת/מבטלת סימון.
-(function wireTaskSelection() {
-  const list = $("#tasks-list");
-  const NO_PRESS = "button, a, input, textarea, select, .drag-handle, .chk-line, .status-dot, .note-del";
-  let timer = null, sx = 0, sy = 0, pid = null, suppressClickUntil = 0;
-  const clear = () => { clearTimeout(timer); timer = null; };
-  list.addEventListener("pointerdown", (e) => {
-    if (e.pointerType === "mouse" && e.button !== 0) return;
-    if (state.selectMode) return;
-    const card = e.target.closest(".card[data-id]");
-    if (!card || e.target.closest(NO_PRESS)) return;
-    clear();
-    sx = e.clientX; sy = e.clientY; pid = e.pointerId;
-    timer = setTimeout(() => {
-      timer = null;
-      suppressClickUntil = Date.now() + 700;
-      try { window.getSelection().removeAllRanges(); } catch (err) {}
-      if (navigator.vibrate) { try { navigator.vibrate(20); } catch (err) {} }
-      enterSelectMode(card.dataset.id);
-    }, 500);
-  });
-  list.addEventListener("pointermove", (e) => {
-    if (timer && e.pointerId === pid && (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10)) clear();
-  });
-  ["pointerup", "pointercancel", "pointerleave"].forEach((ev) => list.addEventListener(ev, clear));
-  list.addEventListener("contextmenu", (e) => {
-    if (timer || state.selectMode || Date.now() < suppressClickUntil) e.preventDefault();
-  });
-  list.addEventListener("click", (e) => {
-    if (Date.now() < suppressClickUntil) { e.stopPropagation(); e.preventDefault(); return; }
-    if (!state.selectMode) return;
-    const card = e.target.closest(".card[data-id]");
-    if (!card || e.target.closest(".drag-handle")) return;
-    e.stopPropagation(); e.preventDefault();
-    toggleSelect(card.dataset.id);
-  }, true);
-})();
-
 function renderTaskTypeFilterChips() {
   const wrap = $("#tasks-type-filter");
   const types = Store.data.taskTypes;
@@ -1194,10 +964,9 @@ function taskCardHTML(t) {
   const doneSet = new Set(t.checkDone || []);
   const chkDone = lines ? lines.filter((l) => doneSet.has(l.text)).length : 0;
   return `
-    <div class="card ${t.status === "done" ? "done" : ""} ${urgency ? "urgency-" + urgency : ""} ${urgencyColorClass(t)} ${state.selectedIds.has(t.id) ? "selected" : ""}" data-id="${t.id}" data-reorder-item>
+    <div class="card ${t.status === "done" ? "done" : ""} ${urgency ? "urgency-" + urgency : ""} ${urgencyColorClass(t)}" data-id="${t.id}" data-reorder-item>
       ${t.heading ? `<div class="card-heading">${esc(t.heading)}</div>` : ""}
       <div class="card-top">
-        <span class="sel-check" aria-hidden="true">✓</span>
         <span class="drag-handle">⠿</span>
         <div class="status-dot ${t.status}" data-action="cycle-status"></div>
         <div class="card-title rich-content ${t.status === "done" ? "strike" : ""}">${lines ? checklistHTML(lines, doneSet) : renderRichText(t.title)}</div>
@@ -1244,12 +1013,6 @@ function updateTaskDateButton() {
 }
 
 function renderTasks() {
-  if (state.selectMode) {
-    const existing = new Set(Store.data.tasks.map((t) => t.id));
-    [...state.selectedIds].forEach((id) => { if (!existing.has(id)) state.selectedIds.delete(id); });
-  }
-  $("#tasks-list").classList.toggle("select-mode", state.selectMode);
-  updateSelectBar();
   renderTaskTypeFilterChips();
   updateTaskDateButton();
   const list = $("#tasks-list");
@@ -1316,7 +1079,7 @@ function renderTasks() {
       Store.reorderTasks(ids);
       if (state.tasksSort !== "manual") { state.tasksSort = "manual"; Store.setUiPref("tasksSort", "manual"); }
       renderTasks();
-    }, taskDragOpts);
+    });
   });
 }
 
@@ -1440,7 +1203,7 @@ enableLongPressReorder($("#tasks-list"), "[data-reorder-item]", (ids) => {
   Store.reorderTasks(ids);
   if (state.tasksSort !== "manual") { state.tasksSort = "manual"; Store.setUiPref("tasksSort", "manual"); }
   renderTasks();
-}, taskDragOpts);
+});
 wireCardActions($("#tasks-list"), "task");
 
 function reminderSectionHTML(task) {
@@ -1557,7 +1320,6 @@ function openTaskForm(taskId, presetLocation, presetGroupId) {
     let reminder = null;
     if (dueAt) {
       reminder = { enabled: true, repeatMinutes, lastFiredAt: null };
-      await ensureNotificationPermission();
     }
     const payload = {
       heading: $("#f-heading").value.trim(),
@@ -1588,6 +1350,8 @@ function openTaskForm(taskId, presetLocation, presetGroupId) {
     closeSheet();
     renderTasks();
     updateUrgentBanner();
+    // הרשאת התראות/רישום Push אחרי השמירה — כדי שהמשימה והתזכורת בענן לא ייתקעו עליהם
+    if (dueAt) ensureNotificationPermission().catch(() => {});
   });
   if (task) {
     $("#delete-task").addEventListener("click", async () => {
@@ -2070,27 +1834,6 @@ function openBuildingBlock(buildingId) {
     }
   });
 }
-// ---------------- סיכום משימות פתוחות לפי בניין / קומה ----------------
-// floorId === undefined → כל הבניין (כולל קומות ומשימות ברמת הבניין). "דחוף" = סימון דחוף או תזכורת באיחור.
-function locationStats(buildingId, floorId) {
-  let open = 0, urgent = 0;
-  Store.data.tasks.forEach((t) => {
-    if (t.buildingId !== buildingId || t.status === "done") return;
-    if (floorId !== undefined && (t.floorId || null) !== floorId) return;
-    open++;
-    if (t.priority === "high" || taskUrgency(t) === "overdue") urgent++;
-  });
-  return { open, urgent };
-}
-function locBadgesHTML(st) {
-  if (!st.open) return "";
-  return `<span class="loc-badges"><span class="loc-badge">${st.open === 1 ? "1 פתוחה" : `${st.open} פתוחות`}</span>${st.urgent ? `<span class="loc-badge urgent">🔴 ${st.urgent === 1 ? "דחוף" : `${st.urgent} דחופות`}</span>` : ""}</span>`;
-}
-function locStatsText(st) {
-  if (!st.open) return "";
-  return [st.open === 1 ? "משימה פתוחה אחת" : `${st.open} משימות פתוחות`, st.urgent ? (st.urgent === 1 ? "🔴 דחוף" : `🔴 ${st.urgent} דחופות`) : ""].filter(Boolean).join(" · ");
-}
-
 function renderBuildings() {
   const list = $("#buildings-list");
   let buildings = [...Store.data.buildings];
@@ -2105,7 +1848,6 @@ function renderBuildings() {
     <div class="building-block" data-id="${b.id}" data-reorder-item>
       <div class="building-head" data-action="toggle">
         <div class="name">🏢 ${esc(b.name)}</div>
-        ${locBadgesHTML(locationStats(b.id))}
         <div class="building-order-btns">
           <button type="button" class="order-btn" data-action="move-up" title="הזז למעלה" ${idx === 0 ? "disabled" : ""}>⬆</button>
           <button type="button" class="order-btn" data-action="move-down" title="הזז למטה" ${idx === buildings.length - 1 ? "disabled" : ""}>⬇</button>
@@ -2121,7 +1863,7 @@ function renderBuildings() {
         ${[...b.floors].sort((a, c) => a.order - c.order).map((f) => `
           <div class="floor-row" data-id="${f.id}" data-reorder-item>
             <span class="drag-handle">⠿</span>
-            <span class="floor-name-tap" data-action="open-floor">${esc(f.name)} ${f.budgetCode ? `<span class="mono" style="color:var(--text-dim);font-size:11px">(${esc(f.budgetCode)})</span>` : ""} ${locBadgesHTML(locationStats(b.id, f.id))}</span>
+            <span class="floor-name-tap" data-action="open-floor">${esc(f.name)} ${f.budgetCode ? `<span class="mono" style="color:var(--text-dim);font-size:11px">(${esc(f.budgetCode)})</span>` : ""}</span>
             <span>
               <button data-action="edit-floor" data-floor="${f.id}">✏️</button>
               <button data-action="delete-floor" data-floor="${f.id}">🗑</button>
@@ -2812,24 +2554,12 @@ const Backup = {
   lastAt() { return Number(lsGet("elec_last_backup_at")) || 0; },
 
   schedule() {
-    if (!this.signedIn() || !this.reconciled) { updateSyncPill(); return; }
+    if (!this.signedIn() || !this.reconciled) return;
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => { this.timer = null; this.push(); }, 4000);
-    updateSyncPill();
+    this.timer = setTimeout(() => this.push(), 4000);
   },
   flush() {
     if (this.timer) { clearTimeout(this.timer); this.timer = null; this.push(); }
-  },
-  // ניסיון חוזר אוטומטי (כל דקה) אחרי כשל, וניסיון ידני מלחיצה על חיווי הסנכרון
-  scheduleRetry() {
-    clearTimeout(this.retryTimer);
-    this.retryTimer = setTimeout(() => { if (this.lastError && this.signedIn()) this.retryNow(); }, 60000);
-  },
-  retryNow() {
-    clearTimeout(this.retryTimer);
-    this.lastError = "";
-    if (!this.reconciled) this.reconcile(); else this.push(true);
-    updateSyncPill();
   },
 
   async push(force = false) {
@@ -2839,7 +2569,6 @@ const Backup = {
     const json = JSON.stringify(Store.data);
     if (!force && json === this.lastPushedJson) return true;
     this.busy = true;
-    updateSyncPill();
     try {
       const counts = Store.counts();
       await this.cloud().putBackup("latest", json, counts);
@@ -2852,7 +2581,6 @@ const Backup = {
     } catch (e) {
       this.lastError = (e && (e.code || e.message)) || String(e);
       console.error("[backup] push failed:", e);
-      this.scheduleRetry();
       return false;
     } finally {
       this.busy = false;
@@ -2914,7 +2642,6 @@ const Backup = {
     } catch (e) {
       this.lastError = (e && (e.code || e.message)) || String(e);
       console.error("[backup] reconcile failed:", e);
-      this.scheduleRetry();
     } finally {
       this.reconciling = false;
       updateBackupLabel();
@@ -2934,44 +2661,7 @@ window.addEventListener("store-changed", () => Backup.schedule());
 document.addEventListener("visibilitychange", () => { if (document.hidden) Backup.flush(); });
 window.addEventListener("pagehide", () => Backup.flush());
 
-// ---------------- חיווי שמירה וסנכרון (בראש המסך) ----------------
-function syncState() {
-  if (!storageSaveOk()) return { key: "save-fail", cls: "bad", icon: "⚠️", text: "השמירה במכשיר נכשלה", detail: "השמירה במכשיר נכשלה (כנראה אין מספיק מקום באחסון). ייצא גיבוי (עוד ← ייצוא גיבוי) ופנה מקום." };
-  const c = window.CloudSync;
-  const cloudOn = !!(c && c.enabled && c.status !== "unconfigured");
-  if (!cloudOn || !c.isGoogle) return { key: "local", cls: "local", icon: "💾", text: "נשמר במכשיר", canConnect: cloudOn, detail: cloudOn ? "הנתונים נשמרים במכשיר בלבד. לחץ כדי להפעיל גיבוי לענן." : "הנתונים נשמרים במכשיר. סנכרון לענן לא מוגדר." };
-  if (Backup.lastError || c.status === "error") return { key: "failed", cls: "bad", icon: "⚠️", text: "הסנכרון נכשל — נסה שוב", detail: Backup.lastError || c.errorMessage || "" };
-  if (navigator.onLine === false) return { key: "offline", cls: "local", icon: "💾", text: "נשמר במכשיר · ממתין לחיבור", detail: "אין חיבור לאינטרנט. הנתונים שמורים במכשיר ויסונכרנו כשהחיבור יחזור." };
-  if (Backup.busy || Backup.timer || Backup.reconciling || !Backup.reconciled) return { key: "syncing", cls: "syncing", icon: "🔄", text: "מסנכרן לענן…", detail: "הנתונים נשמרו במכשיר ומסונכרנים כעת לענן." };
-  const at = Backup.lastAt();
-  const hm = at ? new Date(at).toLocaleTimeString("he-IL", { hour: "2-digit", minute: "2-digit" }) : "";
-  return { key: "ok", cls: "ok", icon: "☁️", text: hm ? `מסונכרן · ${hm}` : "מסונכרן", detail: `הנתונים שמורים במכשיר ובענן${at ? ` (סנכרון אחרון: ${fmtDateTime(at)})` : ""}.` };
-}
-function updateSyncPill() {
-  const el = $("#sync-pill");
-  if (!el) return;
-  const st = syncState();
-  el.className = `sync-pill ${st.cls}`;
-  el.querySelector(".sp-ic").textContent = st.icon;
-  el.querySelector(".sp-tx").textContent = st.text;
-  el.dataset.state = st.key;
-}
-$("#sync-pill").addEventListener("click", async () => {
-  const st = syncState();
-  const c = window.CloudSync;
-  if (st.key === "save-fail") { await alertDialog("השמירה במכשיר נכשלה", st.detail); return; }
-  if (st.key === "failed") {
-    if (c && c.status === "error") { $("#cloud-status-row").click(); return; }
-    Backup.retryNow(); toast("מנסה לסנכרן שוב…"); return;
-  }
-  if (st.key === "local" && st.canConnect) { signInForBackup(); return; }
-  toast(st.detail);
-});
-["save-status", "cloud-status", "backup-auth", "cloud-ready", "online", "offline"].forEach((ev) => window.addEventListener(ev, updateSyncPill));
-window.addEventListener("online", () => { if (Backup.signedIn()) { if (Backup.lastError) Backup.retryNow(); else Backup.schedule(); } });
-
 function updateBackupLabel() {
-  updateSyncPill();
   const el = $("#backup-account-label");
   if (!el) return;
   const c = window.CloudSync;
@@ -3112,14 +2802,20 @@ function updateCloudStatusLabel() {
     connected: "✅ מחובר",
     error: "⚠️ שגיאה — לחץ לפרטים",
   };
-  el.textContent = map[window.CloudSync.status] || "›";
+  el.textContent = window.CloudSync.writeError ? "⚠️ כתיבת תזכורת נכשלה — לחץ" : (map[window.CloudSync.status] || "›");
 }
 window.addEventListener("cloud-status", updateCloudStatusLabel);
 window.addEventListener("cloud-ready", () => {
   updateCloudStatusLabel();
   if ("Notification" in window && Notification.permission === "granted") subscribeToPush(true);
+  // סנכרון מחדש של כל התזכורות הפעילות לענן (גם משימות שנשמרו לפני שהענן הוגדר)
+  try { Store.data.tasks.filter((t) => t.reminder).forEach((t) => syncCloudReminder(t.id)); } catch (e) {}
 });
 $("#cloud-status-row").addEventListener("click", async () => {
+  if (window.CloudSync && window.CloudSync.writeError) {
+    await alertDialog("שגיאת כתיבה לענן", window.CloudSync.writeError + "\n\nסביר שחוקי Firestore לא פורסמו במלואם (Rules → Publish עם התוכן מ-firestore.rules).");
+    return;
+  }
   if (window.CloudSync && window.CloudSync.status === "error") {
     await alertDialog("שגיאת חיבור לענן", `הפרטים המדויקים: ${window.CloudSync.errorMessage || "לא ידוע"}\n\nהסיבות הנפוצות ביותר: "התחברות אנונימית" לא הופעלה ב-Firebase Authentication, או שחוקי ה-Firestore לא פורסמו (Publish). ראה SETUP-CLOUD.md.`);
     return;
@@ -3183,106 +2879,49 @@ function highlight(text, terms) {
   });
   return out;
 }
-const TASK_STATUS_LABEL = { open: "פתוח", in_progress: "בביצוע", done: "בוצע" };
 function runSearch(query) {
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean).map(hebNormalize).filter(Boolean);
   if (!terms.length) return null;
-  // שדה לחיפוש: label = שם השדה, main = כותרת (משקל גבוה), show = להציג "נמצא ב..." כשההתאמה רק בו
-  const F = (label, text, main, show) => ({ label, text: text || "", main: !!main, show: !!show });
-  const trunc = (t) => (t.length > 70 ? t.slice(0, 70) + "…" : t);
-  const evalFields = (fields) => {
-    let score = 0, via = null;
-    const norm = fields.map((f) => ({ ...f, n: hebNormalize(f.text) }));
-    const joined = norm.map((f) => f.n).join(" ");
-    const present = terms.filter((t) => joined.includes(t)).length;
-    norm.forEach((f) => {
-      const hit = terms.some((t) => f.n.includes(t));
-      terms.forEach((t) => { if (f.n.includes(t)) score += f.main ? 3 : 1; });
-      if (!via && f.show && hit) via = f;
-    });
-    return { all: present === terms.length, any: present > 0, score, via };
+  const matchAll = (fields) => {
+    const hay = hebNormalize(fields.join(" "));
+    return terms.every((t) => hay.includes(t));
   };
+  const groups = [];
 
-  const build = (accept) => {
-    const groups = [];
-    const addGroup = (title, icon, items) => {
-      items = items.filter(Boolean).sort((x, y) => y.score - x.score);
-      if (items.length) groups.push({ title, icon, items });
-    };
-    // item(fields, {title, subParts, action}) → תוצאה או null אם אין התאמה
-    const item = (fields, o) => {
-      const r = evalFields(fields);
-      if (!accept(r)) return null;
-      const viaText = r.via ? `${r.via.label}: ${trunc(r.via.text)}` : "";
-      return { title: o.title, sub: [...o.sub, viaText].filter(Boolean).join(" · "), score: r.score, action: o.action };
-    };
+  const taskMatches = Store.data.tasks.filter((t) => matchAll([t.heading || "", stripRichText(t.title), t.type, locationLabel(t) || "", ...t.notes.map((n) => n.text)]));
+  if (taskMatches.length) groups.push({ title: "משימות", icon: "✅", items: taskMatches.map((t) => ({ title: stripRichText(t.title), sub: [t.type, locationLabel(t)].filter(Boolean).join(" · "), action: () => openTaskForm(t.id) })) });
 
-    addGroup("משימות", "✅", Store.data.tasks.map((t) => {
-      const urg = taskUrgency(t);
-      const flags = [t.hold ? "בהמתנה" : "", urg === "overdue" ? "באיחור" : "", t.priority === "high" ? "דחוף" : ""].filter(Boolean);
-      const g = t.groupId && Store.data.taskGroups.find((x) => x.id === t.groupId);
-      const loc = locationLabel(t) || "";
-      const title = stripRichText(t.title);
-      return item([
-        F("כותרת", title, true), F("כותרת", t.heading, true), F("סוג", t.type), F("מיקום", loc),
-        F("סטטוס", `${TASK_STATUS_LABEL[t.status] || ""} ${flags.join(" ")}`),
-        F("תיקייה", g ? g.name : "", false, true), F("סעיף תקציבי", t.budgetCode || buildingBudgetFor(t) || "", false, true),
-        ...t.notes.map((n) => F("הערה", n.text, false, true)),
-      ], {
-        title,
-        sub: [`${t.status === "done" ? "✅" : t.status === "in_progress" ? "🟡" : "⚪"} ${TASK_STATUS_LABEL[t.status] || ""}`, ...flags.map((x) => x === "באיחור" ? "🔴 באיחור" : x === "דחוף" ? "🔴 דחוף" : "⏸ " + x), t.type, loc, g ? "📁 " + g.name : ""],
-        action: () => openTaskForm(t.id),
-      });
-    }));
+  const orderMatches = Store.data.orders.filter((o) => matchAll([o.heading || "", stripRichText(o.title), o.category, stripRichText(o.notes) || "", locationLabel(o) || ""]));
+  if (orderMatches.length) groups.push({ title: "הזמנות", icon: "📦", items: orderMatches.map((o) => ({ title: stripRichText(o.title), sub: [o.category, locationLabel(o)].filter(Boolean).join(" · "), action: () => openOrderForm(o.id) })) });
 
-    addGroup("הזמנות", "📦", Store.data.orders.map((o) => {
-      const loc = locationLabel(o) || "";
-      return item([
-        F("כותרת", stripRichText(o.title), true), F("כותרת", o.heading, true), F("קטגוריה", o.category), F("מיקום", loc),
-        F("שלב", orderStepLabel(o.status)), F("הערה", stripRichText(o.notes), false, true),
-        ...(orderHasItems(o) ? o.items.map((it) => F("פריט", it.name, false, true)) : []),
-      ], { title: stripRichText(o.title), sub: [orderStepLabel(o.status), o.category, loc], action: () => openOrderForm(o.id) });
-    }));
+  const qMatches = Store.data.questions.filter((q) => matchAll([stripRichText(q.text), q.relatedTo || "", stripRichText(q.answer) || ""]));
+  if (qMatches.length) groups.push({ title: "שאלות ובעיות", icon: "❓", items: qMatches.map((q) => ({ title: stripRichText(q.text), sub: q.relatedTo || (q.answer ? "נענה" : "פתוח"), action: () => openQuestionForm(q.id) })) });
 
-    addGroup("שאלות ובעיות", "❓", Store.data.questions.map((q) => item([
-      F("שאלה", stripRichText(q.text), true), F("קשור ל", q.relatedTo), F("תשובה", stripRichText(q.answer), false, true), F("סטטוס", q.answer ? "נענה" : "פתוח"),
-    ], { title: stripRichText(q.text), sub: [q.relatedTo || (q.answer ? "נענה" : "פתוח")], action: () => openQuestionForm(q.id) })));
-
-    const bItems = [];
-    Store.data.buildings.forEach((b) => {
-      bItems.push(item([F("שם", b.name, true), F("סעיף תקציבי", b.budgetCode, false, true), F("הערות בניין", stripRichText(b.notes), false, true)],
-        { title: b.name, sub: [`${b.floors.length} קומות`, locStatsText(locationStats(b.id))], action: () => openBuildingBlock(b.id) }));
-      b.floors.forEach((f) => {
-        bItems.push(item([F("קומה", `${b.name} ${f.name}`, true), F("סעיף תקציבי", f.budgetCode, false, true)],
-          { title: `${b.name} · ${f.name}`, sub: ["קומה", locStatsText(locationStats(b.id, f.id))], action: () => openLocationDetail(b.id, f.id) }));
-      });
+  const buildingMatches = [];
+  Store.data.buildings.forEach((b) => {
+    if (matchAll([b.name])) buildingMatches.push({ title: b.name, sub: `${b.floors.length} קומות`, action: () => openBuildingBlock(b.id) });
+    b.floors.forEach((f) => {
+      if (matchAll([b.name, f.name])) buildingMatches.push({ title: `${b.name} · ${f.name}`, sub: "קומה", action: () => openLocationDetail(b.id, f.id) });
     });
-    addGroup("בניינים וקומות", "🏢", bItems);
+  });
+  if (buildingMatches.length) groups.push({ title: "בניינים וקומות", icon: "🏢", items: buildingMatches });
 
-    addGroup("הערות מיקום", "📍", Store.data.locationNotes.map((n) => {
-      const bl = Store.data.buildings.find((x) => x.id === n.buildingId);
-      const label = bl ? (n.floorId ? `${bl.name} · ${floorName(bl.id, n.floorId)}` : bl.name) : "";
-      const text = stripRichText(n.text);
-      return item([F("הערה", text, true), F("מיקום", label)], { title: text, sub: [label], action: () => openLocationDetail(n.buildingId, n.floorId) });
-    }));
+  const locNoteMatches = Store.data.locationNotes.filter((n) => matchAll([stripRichText(n.text)]));
+  if (locNoteMatches.length) groups.push({ title: "הערות מיקום", icon: "📍", items: locNoteMatches.map((n) => {
+    const b = Store.data.buildings.find((x) => x.id === n.buildingId);
+    const label = b ? (n.floorId ? `${b.name} · ${floorName(b.id, n.floorId)}` : b.name) : "";
+    return { title: stripRichText(n.text), sub: label, action: () => openLocationDetail(n.buildingId, n.floorId) };
+  }) });
 
-    addGroup("הערות כלליות", "🗒️", Store.data.generalNotes.map((n) => {
-      const text = stripRichText(n.text);
-      return item([F("הערה", text, true)], { title: text, sub: [timeAgo(n.createdAt)], action: () => switchView("more") });
-    }));
-    return groups;
-  };
+  const genNoteMatches = Store.data.generalNotes.filter((n) => matchAll([stripRichText(n.text)]));
+  if (genNoteMatches.length) groups.push({ title: "הערות כלליות", icon: "🗒️", items: genNoteMatches.map((n) => ({ title: stripRichText(n.text), sub: timeAgo(n.createdAt), action: () => switchView("more") })) });
 
-  let groups = build((r) => r.all);
-  let partial = false;
-  // חכם: אם אין התאמה מלאה לכל המילים — מציגים התאמות חלקיות (לפחות מילה אחת), הטובות ראשונות
-  if (!groups.length && terms.length > 1) { groups = build((r) => r.any); partial = groups.length > 0; }
-  return { groups, terms, partial };
+  return { groups, terms };
 }
 function searchSheetHTML() {
   return `
     <div class="search-input-wrap">
-      <input type="text" id="search-input" placeholder="חיפוש: משימה, בניין, קומה, הערה, סטטוס...">
+      <input type="text" id="search-input" placeholder="חיפוש חכם בכל הרשימות...">
     </div>
     <div id="search-results"></div>
   `;
@@ -3293,11 +2932,10 @@ function openSearchSheet() {
   const results = $("#search-results");
   function render() {
     const q = input.value;
-    if (!q.trim()) { results.innerHTML = `<p style="color:var(--text-dim);font-size:13.5px">התחל להקליד כדי לחפש בכל מקום: כותרות, הערות, שמות בניינים וקומות, סטטוס (פתוח / בביצוע / בוצע / בהמתנה / באיחור / דחוף), סעיף תקציבי, תיקייה ופריטי הזמנה.<br>אפשר לחפש כמה מילים יחד, למשל: <b>לוח קומה 3</b>.</p>`; return; }
+    if (!q.trim()) { results.innerHTML = `<p style="color:var(--text-dim);font-size:13.5px">התחל להקליד כדי לחפש משימות, הזמנות, שאלות, בניינים, קומות והערות.</p>`; return; }
     const r = runSearch(q);
     if (!r || !r.groups.length) { results.innerHTML = `<p style="color:var(--text-dim);font-size:13.5px">לא נמצאו תוצאות עבור "${esc(q)}"</p>`; return; }
-    const total = r.groups.reduce((n, g) => n + g.items.length, 0);
-    results.innerHTML = `<p class="search-summary">${r.partial ? "לא נמצאה התאמה לכל המילים — מוצגות תוצאות חלקיות" : (total === 1 ? "נמצאה תוצאה אחת" : `נמצאו ${total} תוצאות`)}</p>` + r.groups.map((g) => `
+    results.innerHTML = r.groups.map((g) => `
       <div class="search-group-title">${g.icon} ${esc(g.title)} (${g.items.length})</div>
       ${g.items.map((it, i) => `<div class="search-result" data-group="${esc(g.title)}" data-i="${i}">
         <div class="icon">${g.icon}</div>
@@ -3395,30 +3033,12 @@ function updateUrgentBanner() {
     banner.classList.remove("show");
   }
 }
-let urgentBannerCycle = 0;
 $("#urgent-banner").addEventListener("click", () => {
-  // קופץ למשימה עצמה: מנקה סינונים, פותח את התיקייה שלה (אם מקופלת), גולל אליה ומדגיש אותה.
-  // לחיצה נוספת מעבירה למשימה הבאה (אם יש כמה באיחור).
-  const overdue = Store.data.tasks.filter((t) => taskUrgency(t) === "overdue");
-  const pool = overdue.length ? overdue : Store.data.tasks.filter((t) => taskUrgency(t) === "soon");
-  if (!pool.length) return;
-  pool.sort((a, b) => a.dueAt - b.dueAt);
-  const target = pool[urgentBannerCycle % pool.length];
-  urgentBannerCycle++;
-  if (state.selectMode) exitSelectMode();
-  state.taskStatusFilter = "all"; state.taskTypeFilter = "all";
-  state.taskDateFrom = null; state.taskDateTo = null;
-  $$("#tasks-status-filter .chip").forEach((x) => x.classList.toggle("active", x.dataset.status === "all"));
-  const g = target.groupId && Store.data.taskGroups.find((x) => x.id === target.groupId);
-  if (g && g.collapsed) Store.toggleTaskGroup(g.id);
   switchView("tasks");
-  requestAnimationFrame(() => {
-    const card = $(`#tasks-list .card[data-id="${CSS.escape(target.id)}"]`);
-    if (!card) return;
-    card.scrollIntoView({ block: "center", behavior: "smooth" });
-    card.classList.add("flash-highlight");
-    setTimeout(() => card.classList.remove("flash-highlight"), 2400);
-  });
+  state.taskStatusFilter = "all";
+  $$("#tasks-status-filter .chip").forEach((x) => x.classList.toggle("active", x.dataset.status === "all"));
+  state.tasksSort = "due"; Store.setUiPref("tasksSort", "due");
+  renderTasks();
 });
 
 // ==========================================================

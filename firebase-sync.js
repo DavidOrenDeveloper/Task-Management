@@ -96,6 +96,19 @@ const CloudSync = {
     }
   },
 
+  _reportWriteError(e, where) {
+    const msg = (e && e.code) || (e && e.message) || String(e);
+    console.error("[cloud] " + where + " failed:", msg, e);
+    this.writeError = where + ": " + msg;
+    window.dispatchEvent(new CustomEvent("cloud-status"));
+  },
+
+  // מסנכרן את כל התזכורות הפעילות (וגם מוחק ישנות) — נקרא בכל פתיחה של האפליקציה
+  async syncAllReminders(tasks) {
+    if (!this.enabled) return;
+    for (const t of tasks) this.upsertReminder(t);
+  },
+
   _whenReady(fn) {
     if (this.ready) fn();
     else this._queue.push(fn);
@@ -118,6 +131,7 @@ const CloudSync = {
           await deleteDoc(this._reminderDoc(task.id)).catch(() => {});
           return;
         }
+        this.writeError = "";
         await setDoc(this._reminderDoc(task.id), {
           title: task.title,
           locationLabel: task.locationLabel || "",
