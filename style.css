@@ -1215,3 +1215,7 @@ input:focus, textarea:focus, select:focus {
 
 @keyframes flashcard{0%,100%{box-shadow:0 0 0 0 transparent}50%{box-shadow:0 0 0 4px var(--red)}}
 .card.flash{animation:flashcard .8s ease 3}
+
+/* טקסט ארוך ללא רווחים (קישור/טוקן) לא שובר את הפריסה */
+.note-line, .note-line span, .card-notes, .rich-content, .card .title, .card-title { overflow-wrap: anywhere; word-break: break-word; min-width: 0; }
+.note-line > span:first-of-type, .note-line > .note-body { min-width: 0; flex: 1; }

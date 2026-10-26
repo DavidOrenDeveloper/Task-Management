@@ -1,5 +1,5 @@
 // app.js — ניווט, רינדור, וטיפול באירועים
-const APP_VERSION = "2.7.5";
+const APP_VERSION = "2.7.6";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -2042,7 +2042,7 @@ function locationDetailHTML(buildingId, floorId) {
           <div class="loc-mini-card ${urgencyColorClass(n)}" data-id="${n.id}" data-reorder-item>
             <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
               ${noteArrowsHTML(idx, notes.length)}
-              <span class="rich-content" style="flex:1">${renderRichText(n.text)}</span>
+              <span class="rich-content" style="flex:1;min-width:0;overflow-wrap:anywhere">${renderRichText(n.text)}</span>
               <button class="note-edit" data-edit-note="${n.id}">✏️</button>
               <button class="note-del" data-del-note="${n.id}">✕</button>
             </div>
@@ -2333,7 +2333,7 @@ function renderGeneralNotes() {
     <div class="card ${urgencyColorClass(n)}" data-id="${n.id}" data-reorder-item style="padding:12px">
       <div class="note-line" style="font-size:14px;color:var(--text);display:flex;gap:8px;align-items:flex-start">
         ${noteArrowsHTML(idx, items.length)}
-        <span class="rich-content" style="flex:1">${renderRichText(n.text)}</span>
+        <span class="rich-content" style="flex:1;min-width:0;overflow-wrap:anywhere">${renderRichText(n.text)}</span>
         <button class="note-edit" data-action="edit-note">✏️</button>
         <button class="note-del" data-action="delete-note">✕</button>
       </div>
