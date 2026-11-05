@@ -3,6 +3,8 @@
   --surface: #ffffff;
   --surface-2: #f0f1f4;
   --surface-3: #e6e8ec;
+  --field-bg: #fbfbfd;
+  --field-border: #e3e6ec;
   --border: #e2e4e9;
   --text: #1b1d21;
   --text-dim: #6b7280;
@@ -202,7 +204,7 @@ main {
 }
 .card-title {
   font-size: 15.5px;
-  font-weight: 600;
+  font-weight: 400;
   line-height: 1.4;
   flex: 1;
   color: var(--text);
@@ -496,15 +498,15 @@ nav.bottomnav button.active { color: var(--amber-text); font-weight: 600; }
   color: var(--text-dim);
   margin-bottom: 5px;
 }
-input[type="text"], input[type="number"], input[type="date"], textarea, select {
+input[type="text"], input[type="number"], input[type="date"], input[type="datetime-local"], textarea, select {
   width: 100%;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
+  background: var(--field-bg);
+  border: 1px solid var(--field-border);
   color: var(--text);
   border-radius: var(--radius-sm);
   padding: 12px 12px;
   font-size: 17.5px;
-  font-weight: 600;
+  font-weight: 400;
   font-family: inherit;
   direction: rtl;
 }
@@ -663,7 +665,7 @@ input:focus, textarea:focus, select:focus {
   border-radius: var(--radius-sm);
   padding: 12px 12px;
   font-size: 18px;
-  font-weight: 600;
+  font-weight: 400;
   line-height: 1.5;
   direction: rtl;
 }
@@ -1139,7 +1141,7 @@ input:focus, textarea:focus, select:focus {
 .item-row .item-name { flex: 1; min-width: 0; }
 .qty-stepper { display: inline-flex; align-items: stretch; direction: ltr; flex-shrink: 0; }
 .qty-stepper button {
-  width: 36px; background: var(--surface-2); border: 1px solid var(--border);
+  width: 36px; background: #fff; border: 1.5px solid #dfe3ea;
   font-size: 20px; line-height: 1; color: var(--text); cursor: pointer; padding: 0;
 }
 .qty-stepper button:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
@@ -1164,7 +1166,7 @@ input:focus, textarea:focus, select:focus {
 .field-heading input {
   background: #fff;
   border: 2px solid var(--text);
-  font-weight: 800;
+  font-weight: 500;
 }
 .field-heading input:focus { outline: none; box-shadow: 0 0 0 3px rgba(27, 29, 33, 0.15); }
 /* תיקייה: כחול */
@@ -1176,8 +1178,8 @@ input:focus, textarea:focus, select:focus {
 }
 /* מיקום: ירוק */
 .loc-box {
-  border: 2px solid var(--green);
-  background: #f3fcf6;
+  border: 1px solid var(--field-border);
+  background: #fff;
   border-radius: var(--radius-sm);
   padding: 8px 10px 0;
   margin-bottom: 12px;
@@ -1186,20 +1188,22 @@ input:focus, textarea:focus, select:focus {
 .loc-box .field label { color: #166534; }
 /* פריטי הזמנה: קופסה משלהם */
 .items-box {
-  border: 2px solid var(--border);
-  background: #fafbfc;
+  border: 1px solid var(--field-border);
+  background: #ffffff;
   border-radius: var(--radius-sm);
   padding: 10px;
   margin-bottom: 12px;
 }
-.items-box-title { font-size: 12.5px; font-weight: 800; color: var(--text); margin-bottom: 8px; }
+.items-box-title { font-size: 12.5px; font-weight: 600; color: var(--text-dim); margin-bottom: 8px; }
+.items-box .item-name { background: #fff; border: 1.5px solid #dfe3ea; }
+.items-box .item-name:focus { border-color: var(--amber); }
 
 /* ---------- פריטי הזמנה בכרטיס: וי + שם + כמות בצד ---------- */
 .order-items { display: flex; flex-direction: column; }
 .oi-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px dashed var(--border); cursor: pointer; }
 .oi-row:last-child { border-bottom: none; }
 .oi-box { width: 22px; height: 22px; accent-color: var(--green); flex-shrink: 0; cursor: pointer; }
-.oi-name { flex: 1; min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+.oi-name { flex: 1; min-width: 0; overflow-wrap: anywhere; font-weight: 400; }
 .oi-qty {
   flex-shrink: 0; min-width: 38px; text-align: center;
   background: var(--blue-tint); border: 1px solid var(--blue); border-radius: 999px;
@@ -1219,3 +1223,135 @@ input:focus, textarea:focus, select:focus {
 /* טקסט ארוך ללא רווחים (קישור/טוקן) לא שובר את הפריסה */
 .note-line, .note-line span, .card-notes, .rich-content, .card .title, .card-title { overflow-wrap: anywhere; word-break: break-word; min-width: 0; }
 .note-line > span:first-of-type, .note-line > .note-body { min-width: 0; flex: 1; }
+
+/* =====================================================================
+   v2.8.0 — תוספות ושיפורי תצוגה
+   ===================================================================== */
+[hidden] { display: none !important; }
+.rich-content b, .rich-content strong, .rich-editor b, .rich-editor strong { font-weight: 700; }
+.card-title, .rich-content { font-weight: 400; }
+
+/* ---------- סרגל עיצוב ברור יותר ---------- */
+.rich-toolbar button { min-height: 34px; }
+.rich-toolbar button[data-fmt="bullet"] { font-size: 22px; line-height: 1; padding: 2px 12px; }
+.rich-toolbar button.rt-text { font-size: 11.5px; padding: 6px 9px; color: var(--text-dim); }
+.rich-color-btn {
+  width: auto; min-width: 54px; height: auto;
+  flex-direction: column; gap: 1px; padding: 3px 8px 2px;
+  font-weight: 400;
+}
+.rich-color-btn .rc-a { font-size: 15px; font-weight: 700; line-height: 1.1; padding: 0 5px; border-radius: 3px; }
+.rich-color-btn .rc-font { border-bottom: 3px solid var(--c, #f5b700); }
+.rich-color-btn .rc-fill { background: var(--c, #fff3b0); }
+.rich-color-btn .rc-lbl { font-size: 9.5px; color: var(--text-dim); font-weight: 400; white-space: nowrap; }
+.rich-color-btn.rich-color-bg { text-shadow: none; }
+
+/* ---------- הקטנה / הגדלה של כרטיסים ---------- */
+.collapse-btn {
+  background: none; border: none; color: var(--text-dim); font-size: 15px;
+  padding: 2px 6px; cursor: pointer; flex-shrink: 0; line-height: 1.2;
+  transition: transform .15s ease;
+}
+.card.collapsed .collapse-btn { transform: rotate(90deg); }
+.card.collapsed { padding-top: 9px; padding-bottom: 9px; }
+.card.collapsed .card-title {
+  display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical;
+  overflow: hidden; max-height: 1.5em;
+}
+.card.collapsed .card-notes, .card.collapsed .card-actions, .card.collapsed .reminder-row-actions,
+.card.collapsed .card-stamp, .card.collapsed .budget-toggle, .card.collapsed .budget-value,
+.card.collapsed .order-steps, .card.collapsed .card-photos { display: none; }
+.card.collapsed .card-meta { margin-top: 4px; }
+.card.collapsed .card-meta .tag:not(.urgency-num):not(.due):not(.chk-progress):not(.stat-tag) { display: none; }
+.card .card-meta .tag.stat-tag { display: none; }
+.card.collapsed .card-meta .tag.stat-tag { display: inline-block; }
+
+/* ---------- תיבת עדיפות ---------- */
+.prio-box {
+  border: 2px solid var(--amber); background: #fffaf0;
+  border-radius: var(--radius-sm); padding: 10px 12px 8px; margin-bottom: 14px;
+}
+.prio-title { font-size: 12.5px; font-weight: 800; color: var(--amber-text); margin-bottom: 8px; }
+.prio-row { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
+.prio-num label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
+.prio-num input { width: 96px; text-align: center; background: #fff; border: 1.5px solid #ecd9a3; }
+.prio-hint { font-size: 11.5px; color: var(--text-dim); margin-top: 6px; }
+.prio-box .select-chip { background: #fff; }
+.prio-box .select-chip.active { background: var(--amber); border-color: var(--amber); color: #2b1c00; }
+
+/* ---------- שדות אופציונליים (מיקום / סעיף תקציבי) ---------- */
+.extras { margin: 6px 0 12px; }
+.extra-block { margin-bottom: 8px; padding: 8px 10px 0; border: 1px dashed var(--field-border); border-radius: var(--radius-sm); }
+.extra-title { font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
+.extras-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.extra-add {
+  background: none; border: 1px dashed #cfd4dc; color: #8a919c;
+  font-size: 11.5px; padding: 3px 10px; border-radius: 999px; cursor: pointer;
+}
+.extra-add:active { background: var(--surface-2); }
+
+/* ---------- ממשק תזכורת ---------- */
+.rem-box {
+  background: #fff; border: 1px solid #ecd9a3; border-inline-start: 4px solid var(--amber);
+  border-radius: var(--radius-sm); margin-bottom: 14px; overflow: hidden;
+}
+.rem-toggle {
+  width: 100%; display: flex; align-items: center; gap: 8px; background: none; border: none;
+  padding: 11px 12px; font-size: 14.5px; font-weight: 600; color: var(--amber-text); cursor: pointer; text-align: start;
+}
+.rem-sum { margin-inline-start: auto; font-weight: 400; font-size: 12.5px; color: var(--text-dim); }
+.rem-body { padding: 0 12px 12px; }
+.rem-quick { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.rem-quick button {
+  background: var(--amber-tint); border: 1px solid #f1d98a; color: var(--amber-text);
+  border-radius: 999px; padding: 6px 12px; font-size: 13px; cursor: pointer;
+}
+.rem-dt { background: #fff !important; border: 1.5px solid #ecd9a3 !important; }
+.rem-preview { margin: 10px 0 4px; font-size: 14px; font-weight: 600; color: var(--blue); min-height: 20px; }
+.rem-preview.past { color: var(--red); }
+.rem-repeat-label { font-size: 12px; color: var(--text-dim); margin: 8px 0 6px; }
+.rem-clear { margin-top: 10px; background: none; border: none; color: var(--red); font-size: 12.5px; cursor: pointer; padding: 2px 0; }
+
+/* ---------- חלון קופץ: תזכורת נקבעה ---------- */
+#rem-popup {
+  position: fixed; top: 22%; left: 50%; z-index: 90;
+  transform: translate(-50%, 14px) scale(.96); opacity: 0; pointer-events: none;
+  background: #fff; border-radius: 20px; padding: 20px 26px 18px; min-width: 240px; max-width: 86vw;
+  text-align: center; box-shadow: 0 12px 40px rgba(20,22,30,.22); border-top: 5px solid var(--amber);
+  transition: opacity .25s ease, transform .25s ease;
+}
+#rem-popup.show { opacity: 1; transform: translate(-50%, 0) scale(1); }
+#rem-popup .rp-ic { font-size: 34px; }
+#rem-popup .rp-title { font-size: 13px; color: var(--text-dim); margin-top: 2px; }
+#rem-popup .rp-main { font-size: 20px; font-weight: 700; color: var(--text); margin: 6px 0 4px; line-height: 1.35; }
+#rem-popup .rp-sub { font-size: 13px; color: var(--text-dim); }
+
+/* ---------- תמונות ---------- */
+.photo-grid { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.ph-item { position: relative; }
+.photo-thumb {
+  width: 72px; height: 72px; object-fit: cover; border-radius: 10px; border: 1px solid var(--border);
+  background: var(--surface-2); cursor: zoom-in; display: block;
+}
+.photo-thumb.missing { opacity: .35; }
+.ph-del {
+  position: absolute; top: -6px; inset-inline-start: -6px; width: 22px; height: 22px; border-radius: 50%;
+  background: var(--red); color: #fff; border: 2px solid #fff; font-size: 11px; line-height: 1; cursor: pointer; padding: 0;
+}
+.photo-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.photo-btns button {
+  background: #fff; border: 1.5px solid var(--field-border); color: var(--text); border-radius: var(--radius-sm);
+  padding: 9px 14px; font-size: 13.5px; cursor: pointer;
+}
+.card-photos { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.card-photos .photo-thumb { width: 56px; height: 56px; border-radius: 8px; }
+#photo-viewer { position: fixed; inset: 0; z-index: 1000; background: #000; display: flex; flex-direction: column; touch-action: none; }
+#photo-viewer .pv-top { position: absolute; top: 0; inset-inline: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center; padding: calc(10px + env(safe-area-inset-top)) 14px 10px; color: #fff; background: linear-gradient(#0008, transparent); }
+#photo-viewer .pv-close { background: #fff3; color: #fff; border: none; width: 38px; height: 38px; border-radius: 50%; font-size: 18px; cursor: pointer; }
+#photo-viewer .pv-stage { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; touch-action: none; }
+#photo-viewer .pv-img { max-width: 100%; max-height: 100%; user-select: none; -webkit-user-drag: none; transform-origin: center; }
+#photo-viewer .pv-nav { position: absolute; top: 50%; transform: translateY(-50%); z-index: 2; background: #fff3; color: #fff; border: none; width: 42px; height: 64px; font-size: 28px; cursor: pointer; border-radius: 10px; }
+#photo-viewer .pv-prev { right: 6px; } #photo-viewer .pv-next { left: 6px; }
+.dialog-box p { white-space: pre-line; }
+.items-box .btn-secondary { background: #fff; border: 1.5px dashed #d5d9e0; color: var(--amber-text); font-weight: 600; }
+.sheet .btn-secondary { background: #fff; }

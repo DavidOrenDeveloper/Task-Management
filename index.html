@@ -14,7 +14,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="אתר חשמל">
 
-<link rel="stylesheet" href="style.css?v=2.7.6">
+<link rel="stylesheet" href="style.css?v=2.8.0">
 </head>
 <body>
 
@@ -46,6 +46,7 @@
       <h2>משימות</h2>
       <div class="header-right">
         <span class="count" id="tasks-count"></span>
+        <button class="sort-btn" data-collapse-all="tasks-list">⇕ צמצם הכל</button>
         <button class="sort-btn" id="tasks-sort-btn" data-list="tasks">⇅ מיון</button>
       </div>
     </div>
@@ -70,6 +71,7 @@
       <h2>הזמנות</h2>
       <div class="header-right">
         <span class="count" id="orders-count"></span>
+        <button class="sort-btn" data-collapse-all="orders-list">⇕ צמצם הכל</button>
         <button class="sort-btn" id="orders-sort-btn" data-list="orders">⇅ מיון</button>
       </div>
     </div>
@@ -98,6 +100,7 @@
       <h2>שאלות ובעיות</h2>
       <div class="header-right">
         <span class="count" id="questions-count"></span>
+        <button class="sort-btn" data-collapse-all="questions-list">⇕ צמצם הכל</button>
         <button class="sort-btn" id="questions-sort-btn" data-list="questions">⇅ מיון</button>
       </div>
     </div>
@@ -225,8 +228,8 @@
 
 <div class="toast" id="toast"></div>
 
-<script src="storage.js?v=2.7.6"></script>
-<script type="module" src="firebase-sync.js?v=2.7.6"></script>
-<script src="app.js?v=2.7.6"></script>
+<script src="storage.js?v=2.8.0"></script>
+<script type="module" src="firebase-sync.js?v=2.8.0"></script>
+<script src="app.js?v=2.8.0"></script>
 </body>
 </html>

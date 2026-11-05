@@ -1,5 +1,5 @@
 // app.js — ניווט, רינדור, וטיפול באירועים
-const APP_VERSION = "2.7.6";
+const APP_VERSION = "2.8.0";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -105,16 +105,16 @@ function richEditorHTML(id, placeholder, html) {
       <button type="button" data-fmt="bold" title="הדגשה"><b>B</b></button>
       <button type="button" data-fmt="italic" title="נטוי"><i>I</i></button>
       <span class="rich-sep"></span>
-      <button type="button" data-fmt="bullet" title="רשימת נקודות">☰</button>
+      <button type="button" data-fmt="bullet" title="רשימת נקודות">•</button>
       <button type="button" data-fmt="number" title="רשימה ממוספרת">1.</button>
       <span class="rich-sep"></span>
       <button type="button" data-fmt="alignRight" title="יישור לימין">➡</button>
       <button type="button" data-fmt="alignCenter" title="יישור למרכז">↔</button>
       <button type="button" data-fmt="alignLeft" title="יישור לשמאל">⬅</button>
       <span class="rich-sep"></span>
-      <label class="rich-color-btn" title="צבע טקסט">A<input type="color" data-fmt="color" value="#f5b700"></label>
-      <label class="rich-color-btn rich-color-bg" title="צבע רקע">A<input type="color" data-fmt="bgcolor" value="#fff3b0"></label>
-      <button type="button" data-fmt="clear" title="ניקוי עיצוב">⟲</button>
+      <label class="rich-color-btn" title="צבע גופן" style="--c:#dc2626"><span class="rc-a rc-font">A</span><span class="rc-lbl">צבע גופן</span><input type="color" data-fmt="color" value="#dc2626"></label>
+      <label class="rich-color-btn rich-color-bg" title="מילוי (צבע רקע מאחורי הטקסט)" style="--c:#fff3b0"><span class="rc-a rc-fill">A</span><span class="rc-lbl">מילוי</span><input type="color" data-fmt="bgcolor" value="#fff3b0"></label>
+      <button type="button" data-fmt="clear" class="rt-text" title="מסיר צבעים, הדגשה ונטייה מהטקסט המסומן">ניקוי עיצוב</button>
     </div>
     <div id="${id}" class="rich-editor" contenteditable="true" data-placeholder="${esc(placeholder || "")}">${html || ""}</div>
   `;
@@ -213,6 +213,7 @@ document.addEventListener("input", (e) => {
     if (!el) return;
     el.focus();
     ensureRichStyleWithCSS();
+    const lab = input.closest("label"); if (lab) lab.style.setProperty("--c", input.value);
     document.execCommand(input.dataset.fmt === "color" ? "foreColor" : "hiliteColor", false, input.value);
     richHistoryPush(el);
   }
@@ -313,6 +314,270 @@ const state = {
   locNotesUrgencyDir: Store.data.uiPrefs.locNotesUrgencyDir || "asc",
 };
 
+// ==========================================================
+// v2.8.0 — הקטנת כרטיסים, תמונות, טיוטות אוטומטיות, חלון תזכורת
+// ==========================================================
+const safeLS = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } },
+  del(k) { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } },
+};
+
+// ---------- הקטנה / הגדלה של כרטיסים (נשמר במכשיר) ----------
+const COLLAPSE_KEY = "collapsedCards_v1";
+let collapsedSet = new Set();
+try { collapsedSet = new Set(JSON.parse(safeLS.get(COLLAPSE_KEY) || "[]")); } catch (e) { /* ignore */ }
+const saveCollapsed = () => safeLS.set(COLLAPSE_KEY, JSON.stringify([...collapsedSet]));
+const isCollapsed = (id) => collapsedSet.has(id);
+const collapseBtnHTML = () => `<button type="button" class="collapse-btn" data-action="toggle-collapse" aria-label="הקטנה / הגדלה של הכרטיס" title="הקטנה / הגדלה">▾</button>`;
+function updateCollapseAllLabels() {
+  $$("[data-collapse-all]").forEach((btn) => {
+    const cards = $$(`#${btn.dataset.collapseAll} .card[data-id]`);
+    const anyOpen = cards.some((c) => !c.classList.contains("collapsed"));
+    btn.textContent = anyOpen ? "⇕ צמצם הכל" : "⇕ הרחב הכל";
+  });
+}
+document.addEventListener("click", (e) => {
+  const t = e.target.closest && e.target.closest('[data-action="toggle-collapse"]');
+  if (t) {
+    e.stopPropagation();
+    const card = t.closest(".card");
+    if (!card) return;
+    const id = card.dataset.id;
+    const now = card.classList.toggle("collapsed");
+    if (now) collapsedSet.add(id); else collapsedSet.delete(id);
+    saveCollapsed();
+    updateCollapseAllLabels();
+    return;
+  }
+  const all = e.target.closest && e.target.closest("[data-collapse-all]");
+  if (all) {
+    e.stopPropagation();
+    const cards = $$(`#${all.dataset.collapseAll} .card[data-id]`);
+    const collapse = cards.some((c) => !c.classList.contains("collapsed"));
+    cards.forEach((c) => {
+      c.classList.toggle("collapsed", collapse);
+      if (collapse) collapsedSet.add(c.dataset.id); else collapsedSet.delete(c.dataset.id);
+    });
+    saveCollapsed();
+    updateCollapseAllLabels();
+    return;
+  }
+  const img = e.target.closest && e.target.closest("img.photo-thumb[data-pid]");
+  if (img) {
+    e.stopPropagation();
+    const wrap = img.closest(".card-photos, .photo-grid");
+    const ids = wrap ? $$("img[data-pid]", wrap).map((i) => i.dataset.pid) : [img.dataset.pid];
+    openPhotoViewer(ids, Math.max(0, ids.indexOf(img.dataset.pid)));
+  }
+}, true);
+
+// ---------- תמונות: נשמרות ב-IndexedDB של הטלפון (לא ב-localStorage, כדי לא למלא אותו) ----------
+const PhotoDB = (() => {
+  let dbp = null;
+  const open = () => {
+    if (dbp) return dbp;
+    dbp = new Promise((res, rej) => {
+      if (!window.indexedDB) { rej(new Error("no indexedDB")); return; }
+      const r = indexedDB.open("site_photos", 1);
+      r.onupgradeneeded = () => r.result.createObjectStore("photos");
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+    return dbp;
+  };
+  const tx = async (mode, fn) => {
+    const db = await open();
+    return new Promise((res, rej) => {
+      const t = db.transaction("photos", mode);
+      const req = fn(t.objectStore("photos"));
+      t.oncomplete = () => res(req ? req.result : undefined);
+      t.onerror = () => rej(t.error);
+      t.onabort = () => rej(t.error);
+    });
+  };
+  return {
+    put: (id, blob) => tx("readwrite", (s) => s.put(blob, id)),
+    get: (id) => tx("readonly", (s) => s.get(id)),
+    del: (id) => tx("readwrite", (s) => s.delete(id)),
+  };
+})();
+const newPhotoId = () => "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const photoURLs = new Map();
+async function photoURL(id) {
+  if (photoURLs.has(id)) return photoURLs.get(id);
+  try {
+    const blob = await PhotoDB.get(id);
+    if (!blob) return null;
+    const url = URL.createObjectURL(blob);
+    photoURLs.set(id, url);
+    return url;
+  } catch (e) { return null; }
+}
+async function hydratePhotos(root) {
+  const imgs = $$("img[data-pid]:not([data-loaded])", root || document);
+  for (const img of imgs) {
+    img.dataset.loaded = "1";
+    const url = await photoURL(img.dataset.pid);
+    if (url) img.src = url; else img.classList.add("missing");
+  }
+}
+new MutationObserver(() => hydratePhotos()).observe(document.body, { childList: true, subtree: true });
+function deletePhotoIds(ids) {
+  (ids || []).forEach((id) => {
+    PhotoDB.del(id).catch(() => {});
+    const u = photoURLs.get(id);
+    if (u) { URL.revokeObjectURL(u); photoURLs.delete(id); }
+  });
+}
+// כיווץ התמונה (עד 1600px, JPEG) — כדי שלא תתפוס מקום מיותר
+async function compressImage(file, maxDim = 1600, quality = 0.8) {
+  let bmp;
+  try { bmp = await createImageBitmap(file, { imageOrientation: "from-image" }); }
+  catch (e) {
+    bmp = await new Promise((res, rej) => {
+      const im = new Image();
+      im.onload = () => res(im); im.onerror = rej;
+      im.src = URL.createObjectURL(file);
+    });
+  }
+  const w = bmp.width || bmp.naturalWidth, h = bmp.height || bmp.naturalHeight;
+  const k = Math.min(1, maxDim / Math.max(w, h));
+  const c = document.createElement("canvas");
+  c.width = Math.round(w * k); c.height = Math.round(h * k);
+  c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+  return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error("toBlob"))), "image/jpeg", quality));
+}
+
+// ---------- מציג תמונות במסך מלא (הגדלה בצביטה, גרירה, החלקה בין תמונות) ----------
+let photoViewerClose = null;
+function openPhotoViewer(ids, start) {
+  if (!ids || !ids.length) return;
+  if (photoViewerClose) photoViewerClose();
+  let idx = start || 0, scale = 1, tx = 0, ty = 0;
+  const el = document.createElement("div");
+  el.id = "photo-viewer";
+  el.innerHTML = `
+    <div class="pv-top"><button type="button" class="pv-close" aria-label="סגירה">✕</button><span class="pv-count"></span></div>
+    <div class="pv-stage"><img class="pv-img" alt=""></div>
+    ${ids.length > 1 ? `<button type="button" class="pv-nav pv-prev" aria-label="הקודמת">›</button><button type="button" class="pv-nav pv-next" aria-label="הבאה">‹</button>` : ""}`;
+  document.body.appendChild(el);
+  const img = $(".pv-img", el), stage = $(".pv-stage", el), count = $(".pv-count", el);
+  const apply = () => { img.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`; };
+  const show = async (i) => {
+    idx = (i + ids.length) % ids.length; scale = 1; tx = ty = 0; apply();
+    count.textContent = ids.length > 1 ? `${idx + 1} / ${ids.length}` : "";
+    const u = await photoURL(ids[idx]);
+    img.src = u || "";
+  };
+  const close = () => {
+    if (!photoViewerClose) return;
+    photoViewerClose = null;
+    document.removeEventListener("keydown", onKey);
+    el.remove();
+    popBackableIfMatches(close);
+  };
+  const onKey = (e) => { if (e.key === "Escape") close(); else if (e.key === "ArrowLeft") show(idx + 1); else if (e.key === "ArrowRight") show(idx - 1); };
+  document.addEventListener("keydown", onKey);
+  photoViewerClose = close;
+  pushBackable(close);
+  $(".pv-close", el).addEventListener("click", close);
+  const pv = $(".pv-prev", el), nx = $(".pv-next", el);
+  if (pv) pv.addEventListener("click", () => show(idx - 1));
+  if (nx) nx.addEventListener("click", () => show(idx + 1));
+  // מחוות
+  const pts = new Map();
+  let startDist = 0, startScale = 1, pan = null, lastTap = 0;
+  const dist = () => { const [a, b] = [...pts.values()]; return Math.hypot(a.x - b.x, a.y - b.y) || 1; };
+  stage.addEventListener("pointerdown", (e) => {
+    stage.setPointerCapture(e.pointerId);
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 2) { startDist = dist(); startScale = scale; pan = null; }
+    else pan = { x: e.clientX, y: e.clientY, tx, ty, t: Date.now(), moved: 0 };
+  });
+  stage.addEventListener("pointermove", (e) => {
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 2) { scale = Math.min(5, Math.max(1, startScale * dist() / startDist)); if (scale === 1) { tx = ty = 0; } apply(); }
+    else if (pan) {
+      const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
+      pan.moved = Math.max(pan.moved, Math.hypot(dx, dy));
+      if (scale > 1) { tx = pan.tx + dx; ty = pan.ty + dy; apply(); }
+    }
+  });
+  const end = (e) => {
+    if (!pts.has(e.pointerId)) return;
+    const was = pts.size;
+    pts.delete(e.pointerId);
+    if (was === 1 && pan) {
+      const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
+      if (pan.moved < 8 && Date.now() - pan.t < 300) {
+        if (Date.now() - lastTap < 320) { scale = scale > 1 ? 1 : 2.5; tx = ty = 0; apply(); lastTap = 0; }
+        else lastTap = Date.now();
+      } else if (scale === 1 && Math.abs(dx) > 60 && Math.abs(dy) < 90 && ids.length > 1) {
+        show(dx < 0 ? idx + 1 : idx - 1);
+      }
+    }
+    if (pts.size < 2) pan = null;
+  };
+  stage.addEventListener("pointerup", end);
+  stage.addEventListener("pointercancel", end);
+  stage.addEventListener("wheel", (e) => { e.preventDefault(); scale = Math.min(5, Math.max(1, scale * (e.deltaY < 0 ? 1.15 : 0.87))); if (scale === 1) tx = ty = 0; apply(); }, { passive: false });
+  show(idx);
+}
+
+// ---------- חלון קופץ: "התזכורת נקבעה — בעוד ..." ----------
+let remPopupTimer = null;
+function showReminderPopup(dueAt) {
+  let el = $("#rem-popup");
+  if (!el) { el = document.createElement("div"); el.id = "rem-popup"; document.body.appendChild(el); }
+  const left = dueAt - Date.now();
+  el.innerHTML = `
+    <div class="rp-ic">⏰</div>
+    <div class="rp-title">${left > 0 ? "התזכורת נקבעה" : "התזכורת נקבעה לזמן שכבר עבר"}</div>
+    ${left > 0 ? `<div class="rp-main">בעוד ${esc(formatTimeLeft(left))}</div>` : ""}
+    <div class="rp-sub">${esc(formatDueLabel(dueAt))}</div>`;
+  requestAnimationFrame(() => el.classList.add("show"));
+  clearTimeout(remPopupTimer);
+  remPopupTimer = setTimeout(() => el.classList.remove("show"), 3800);
+}
+
+// ---------- טיוטות אוטומטיות למשימה (שורדות יציאה מהאפליקציה / קריסה) ----------
+const DRAFT_PREFIX = "taskDraft_v1:";
+const draftKey = (taskId) => DRAFT_PREFIX + (taskId || "new");
+const saveDraft = (key, data) => safeLS.set(key, JSON.stringify({ data, at: Date.now() }));
+const clearDraft = (key) => safeLS.del(key);
+function loadDraft(key) { try { const r = safeLS.get(key); return r ? JSON.parse(r) : null; } catch (e) { return null; } }
+function listDraftKeys() {
+  const out = [];
+  try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith(DRAFT_PREFIX)) out.push(k); } } catch (e) { /* ignore */ }
+  return out;
+}
+async function checkTaskDrafts() {
+  for (const key of listDraftKeys()) {
+    const rec = loadDraft(key);
+    const taskId = key.slice(DRAFT_PREFIX.length);
+    const isNew = taskId === "new";
+    const task = isNew ? null : Store.data.tasks.find((t) => t.id === taskId);
+    const savedPhotos = (task && task.photos) || [];
+    const extraPhotos = (d) => ((d && d.photos) || []).filter((id) => !savedPhotos.includes(id));
+    if (!rec || !rec.data || (!isNew && !task)) { if (rec && rec.data) deletePhotoIds(extraPhotos(rec.data)); clearDraft(key); continue; }
+    const d = rec.data;
+    const preview = (stripRichText(d.title) || d.heading || "").slice(0, 60) || "ללא טקסט";
+    const when = new Date(rec.at).toLocaleString("he-IL", { dateStyle: "short", timeStyle: "short" });
+    const choice = await chooseDialog(
+      "נמצאה משימה שלא נשמרה",
+      `${isNew ? "משימה חדשה" : "עריכה של משימה קיימת"} (${when}):\n«${preview}»\nהאם לחזור אליה ולהמשיך, או למחוק את מה שנשמר אוטומטית?`,
+      [
+        { label: "מחיקה", value: "discard", style: "danger" },
+        { label: "חזרה לעריכה", value: "restore", style: "primary" },
+      ]
+    );
+    if (choice === "restore") { openTaskForm(isNew ? null : taskId, null, null, d); return; }
+    if (choice === "discard") { deletePhotoIds(extraPhotos(d)); clearDraft(key); }
+  }
+}
+
 // ---------------- Toast ----------------
 let toastTimer;
 function toast(msg, ms = 1800) {
@@ -401,6 +666,7 @@ async function chooseDialog(title, message, options) {
 // ---------------- Sheet (bottom modal) ----------------
 function openSheet(html) {
   const alreadyOpen = $("#sheet").classList.contains("show");
+  sheetGuard = null; // כל טופס שצריך הגנה (שמירה לפני יציאה) מגדיר אותה מחדש
   $("#sheet-content").innerHTML = html;
   $("#sheet").classList.add("show");
   $("#sheet-backdrop").classList.add("show");
@@ -411,10 +677,17 @@ function openSheet(html) {
   $("#sheet").scrollTop = 0;
   if (!alreadyOpen) pushBackable(closeSheet);
 }
-function closeSheet() {
+// sheetGuard: כשהטופס פתוח עם שינויים שלא נשמרו, סגירה (חזרה / לחיצה בחוץ) קודם שואלת האם לשמור
+let sheetGuard = null;
+function closeSheetNow() {
+  sheetGuard = null;
   $("#sheet").classList.remove("show");
   $("#sheet-backdrop").classList.remove("show");
   popBackableIfMatches(closeSheet);
+}
+function closeSheet() {
+  if (sheetGuard) { sheetGuard(); return; }
+  closeSheetNow();
 }
 $("#sheet-backdrop").addEventListener("click", closeSheet);
 
@@ -632,7 +905,7 @@ function taskUrgency(t) {
 // ---------------- Building/Floor <select> builder ----------------
 function buildingSelectHTML(selectedBuildingId, selectedFloorId) {
   const buildings = Store.data.buildings;
-  let html = `<div class="loc-box"><div class="loc-box-title">📍 מיקום</div><div class="field-row">
+  let html = `<div class="field-row">
     <div class="field">
       <label>בניין (אופציונלי)</label>
       <select id="f-building">
@@ -646,8 +919,30 @@ function buildingSelectHTML(selectedBuildingId, selectedFloorId) {
         <option value="">— ללא —</option>
       </select>
     </div>
-  </div></div>`;
+  </div>`;
   return html;
+}
+// מיקום וסעיף תקציבי — כפתורים קטנים בסוף הטופס; השדות נפתחים רק בלחיצה (או אם כבר יש בהם תוכן)
+function extrasHTML(item, preset) {
+  const hasLoc = !!(item.buildingId || item.floorId || (preset && (preset.buildingId || preset.floorId)));
+  const hasBud = !!item.budgetCode;
+  return `<div class="extras">
+    <div class="extra-block" id="x-loc" ${hasLoc ? "" : "hidden"}><div class="extra-title">📍 מיקום</div>${buildingSelectHTML(item.buildingId, item.floorId)}</div>
+    <div class="extra-block" id="x-budget" ${hasBud ? "" : "hidden"}>${budgetFieldHTML(item.budgetCode)}</div>
+    <div class="extras-btns">
+      <button type="button" class="extra-add" data-x="x-loc" ${hasLoc ? "hidden" : ""}>＋ מיקום</button>
+      <button type="button" class="extra-add" data-x="x-budget" ${hasBud ? "hidden" : ""}>＋ סעיף תקציבי</button>
+    </div>
+  </div>`;
+}
+function wireExtras() {
+  $$(".extra-add").forEach((b) => b.addEventListener("click", () => {
+    const blk = document.getElementById(b.dataset.x);
+    if (!blk) return;
+    blk.hidden = false; b.hidden = true;
+    const f = $("input,select", blk);
+    if (f && f.tagName === "INPUT") f.focus();
+  }));
 }
 function wireFloorSelect(selectedBuildingId, selectedFloorId) {
   const bSel = $("#f-building");
@@ -899,13 +1194,18 @@ function urgencyBadgeHTML(item) {
   const colorClass = urgencyColorClass(item);
   return `<span class="tag urgency-num ${colorClass}">🔢 ${esc(String(v))}</span>`;
 }
+function urgencyInputHTML(id, value) {
+  return `<div class="prio-num">
+      <label for="${id}">מספר דחיפות</label>
+      <input type="number" id="${id}" value="${value === null || value === undefined ? "" : esc(String(value))}" placeholder="1" min="1" step="1" inputmode="numeric">
+    </div>`;
+}
 function urgencyFieldHTML(id, value) {
-  return `
-    <div class="field">
-      <label>מספר דחיפות (אופציונלי — ככל שקטן יותר, דחוף יותר: 1 = הכי דחוף)</label>
-      <input type="number" id="${id}" value="${value === null || value === undefined ? "" : esc(String(value))}" placeholder="לדוגמה: 1" min="1" step="1" style="max-width:120px">
-    </div>
-  `;
+  return `<div class="prio-box">
+    <div class="prio-title">⚡ עדיפות</div>
+    ${urgencyInputHTML(id, value)}
+    <div class="prio-hint">ככל שהמספר קטן יותר — דחוף יותר (1 = הכי דחוף). אופציונלי.</div>
+  </div>`;
 }
 function readUrgencyField(id) {
   const raw = ($(`#${id}`) && $(`#${id}`).value || "").trim();
@@ -964,12 +1264,13 @@ function taskCardHTML(t) {
   const doneSet = new Set(t.checkDone || []);
   const chkDone = lines ? lines.filter((l) => doneSet.has(l.text)).length : 0;
   return `
-    <div class="card ${t.status === "done" ? "done" : ""} ${urgency ? "urgency-" + urgency : ""} ${urgencyColorClass(t)}" data-id="${t.id}" data-reorder-item>
+    <div class="card ${t.status === "done" ? "done" : ""} ${urgency ? "urgency-" + urgency : ""} ${urgencyColorClass(t)} ${isCollapsed(t.id) ? "collapsed" : ""}" data-id="${t.id}" data-reorder-item>
       ${t.heading ? `<div class="card-heading">${esc(t.heading)}</div>` : ""}
       <div class="card-top">
         <span class="drag-handle">⠿</span>
         <div class="status-dot ${t.status}" data-action="cycle-status"></div>
         <div class="card-title rich-content ${t.status === "done" ? "strike" : ""}">${lines ? checklistHTML(lines, doneSet) : renderRichText(t.title)}</div>
+        ${collapseBtnHTML()}
       </div>
       <div class="card-meta">
         <span class="tag type">${esc(t.type)}</span>
@@ -980,6 +1281,7 @@ function taskCardHTML(t) {
         ${t.hold ? `<span class="tag hold">⏸ בהמתנה</span>` : ""}
         ${t.dueAt && !t.hold && t.status !== "done" ? `<span class="tag due ${urgency === "overdue" ? "due-overdue" : urgency === "soon" ? "due-soon" : "due-later"}">⏰ ${esc(formatDueLabel(t.dueAt))}</span>` : ""}
       </div>
+      ${t.photos && t.photos.length ? `<div class="card-photos">${t.photos.map((id) => `<img class="photo-thumb" data-pid="${id}" alt="תמונה">`).join("")}</div>` : ""}
       ${t.notes.length ? `<div class="card-notes">${t.notes.map((n) => `<div class="note-line"><span>${esc(n.text)}</span><button class="note-del" data-note="${n.id}">✕</button></div>`).join("")}</div>` : ""}
       ${t.budgetCode || budget ? `<button class="budget-toggle" data-action="toggle-budget">💰 סעיף תקציבי</button><div class="budget-value">קוד: <b>${esc(t.budgetCode || budget)}</b></div>` : ""}
       <div class="card-actions">
@@ -1209,25 +1511,63 @@ wireCardActions($("#tasks-list"), "task");
 function reminderSectionHTML(task) {
   const dueVal = task && task.dueAt ? toDatetimeLocalValue(task.dueAt) : "";
   const repeatVal = (task && task.reminder && task.reminder.repeatMinutes) || "";
+  const has = !!dueVal;
+  const reps = [["", "ללא חזרה"], ["15", "כל 15 דק׳"], ["30", "כל חצי שעה"], ["60", "כל שעה"], ["120", "כל שעתיים"], ["1440", "כל יום"]];
   return `
-    <div class="reminder-section">
-      <div class="field">
-        <label>תזכורת (אופציונלי) — כמו תזכיר בטלפון</label>
-        <input type="datetime-local" id="f-due" value="${dueVal}">
-      </div>
-      <div class="field">
-        <label>התראה חוזרת (נודניק אוטומטי)</label>
-        <select id="f-repeat">
-          <option value="" ${!repeatVal ? "selected" : ""}>ללא חזרה</option>
-          <option value="15" ${repeatVal == 15 ? "selected" : ""}>כל 15 דקות</option>
-          <option value="30" ${repeatVal == 30 ? "selected" : ""}>כל חצי שעה</option>
-          <option value="60" ${repeatVal == 60 ? "selected" : ""}>כל שעה</option>
-          <option value="120" ${repeatVal == 120 ? "selected" : ""}>כל שעתיים</option>
-          <option value="1440" ${repeatVal == 1440 ? "selected" : ""}>כל יום</option>
-        </select>
+    <div class="rem-box" id="rem-box">
+      <button type="button" class="rem-toggle" id="rem-toggle">⏰ <span>${has ? "תזכורת" : "הוספת תזכורת"}</span><span class="rem-sum" id="rem-sum"></span></button>
+      <div class="rem-body" id="rem-body" ${has ? "" : "hidden"}>
+        <div class="rem-quick" id="rem-quick">
+          <button type="button" data-add="60">בעוד שעה</button>
+          <button type="button" data-add="180">בעוד 3 שעות</button>
+          <button type="button" data-preset="tomorrow">מחר ב-08:00</button>
+          <button type="button" data-add="10080">בעוד שבוע</button>
+        </div>
+        <input type="datetime-local" id="f-due" class="rem-dt" value="${dueVal}">
+        <div class="rem-preview" id="rem-preview"></div>
+        <div class="rem-repeat-label">התראה חוזרת (נודניק אוטומטי)</div>
+        <div class="select-chip-group" id="f-repeat-group">
+          ${reps.map(([v, l]) => `<div class="select-chip ${String(repeatVal) === v ? "active" : ""}" data-val="${v}">${l}</div>`).join("")}
+        </div>
+        <input type="hidden" id="f-repeat" value="${repeatVal}">
+        <button type="button" class="rem-clear" id="rem-clear">✕ הסרת התזכורת</button>
       </div>
     </div>
   `;
+}
+function wireReminderUI() {
+  const body = $("#rem-body"), due = $("#f-due"), prev = $("#rem-preview"), sum = $("#rem-sum");
+  const refresh = () => {
+    if (!due.value) { prev.textContent = ""; prev.classList.remove("past"); sum.textContent = ""; return; }
+    const ts = new Date(due.value).getTime();
+    const left = ts - Date.now();
+    prev.classList.toggle("past", left <= 0);
+    prev.textContent = left > 0 ? `🔔 תופיע בעוד ${formatTimeLeft(left)}` : "הזמן שבחרת כבר עבר";
+    sum.textContent = formatDueLabel(ts);
+  };
+  $("#rem-toggle").addEventListener("click", () => { body.hidden = !body.hidden; });
+  $("#rem-quick").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    let ts;
+    if (b.dataset.preset === "tomorrow") { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(8, 0, 0, 0); ts = d.getTime(); }
+    else ts = Date.now() + Number(b.dataset.add) * 60000;
+    due.value = toDatetimeLocalValue(ts);
+    refresh();
+    due.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  due.addEventListener("input", refresh);
+  due.addEventListener("change", refresh);
+  $("#f-repeat-group").addEventListener("click", (e) => {
+    const c = e.target.closest(".select-chip"); if (!c) return;
+    $$("#f-repeat-group .select-chip").forEach((x) => x.classList.remove("active"));
+    c.classList.add("active");
+    $("#f-repeat").value = c.dataset.val;
+  });
+  $("#rem-clear").addEventListener("click", () => {
+    due.value = ""; refresh(); body.hidden = true;
+    due.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  refresh();
 }
 
 function groupOptionsHTML(selectedId) {
@@ -1236,11 +1576,15 @@ function groupOptionsHTML(selectedId) {
     groups.map((g) => `<option value="${esc(g.id)}" ${g.id === selectedId ? "selected" : ""}>📁 ${esc(g.name)}</option>`).join("") +
     `<option value="__new">➕ תיקייה חדשה...</option>`;
 }
-function taskFormHTML(task, presetGroupId) {
-  const isEdit = !!task;
+function taskFormHTML(task, presetGroupId, isEditOverride, presetLocation) {
+  const isEdit = isEditOverride !== undefined ? isEditOverride : !!task;
   task = task || { title: "", type: Store.data.taskTypes[0] || "", priority: "normal", buildingId: "", floorId: "", budgetCode: "", urgency: null, groupId: presetGroupId || "" };
   return `
     <h3>${isEdit ? "עריכת משימה" : "משימה חדשה"}</h3>
+    <div class="field field-folder">
+      <label>📁 תיקייה</label>
+      <select id="f-group">${groupOptionsHTML(task.groupId || "")}</select>
+    </div>
     <div class="field field-heading">
       <label>🔖 כותרת (אופציונלי — תופיע בקטן מעל המשימה)</label>
       <input type="text" id="f-heading" value="${esc(task.heading || "")}" placeholder="לדוגמה: לוח ראשי">
@@ -1249,54 +1593,130 @@ function taskFormHTML(task, presetGroupId) {
       <label>📝 תיאור המשימה</label>
       ${richEditorHTML("f-title", "לדוגמה: להתקין לוח חשמל בקומה 3", task.title)}
     </div>
-    <div class="field field-folder">
-      <label>📁 תיקייה</label>
-      <select id="f-group">${groupOptionsHTML(task.groupId || "")}</select>
-    </div>
     <div class="field">
       <label>סוג</label>
       <div id="f-type-wrap"></div>
     </div>
-    ${buildingSelectHTML(task.buildingId, task.floorId)}
-    <div class="field">
-      <label>עדיפות</label>
-      <div class="select-chip-group" id="f-priority-group">
-        <div class="select-chip ${task.priority !== "high" ? "active" : ""}" data-val="normal">רגילה</div>
-        <div class="select-chip ${task.priority === "high" ? "active" : ""}" data-val="high">דחופה</div>
+    <div class="prio-box">
+      <div class="prio-title">⚡ עדיפות</div>
+      <div class="prio-row">
+        <div class="select-chip-group" id="f-priority-group">
+          <div class="select-chip ${task.priority !== "high" ? "active" : ""}" data-val="normal">רגילה</div>
+          <div class="select-chip ${task.priority === "high" ? "active" : ""}" data-val="high">דחופה</div>
+        </div>
+        ${urgencyInputHTML("f-urgency", task.urgency)}
       </div>
+      <div class="prio-hint">מספר דחיפות: ככל שקטן יותר — דחוף יותר (1 = הכי דחוף). אופציונלי.</div>
     </div>
-    ${urgencyFieldHTML("f-urgency", task.urgency)}
-    ${budgetFieldHTML(task.budgetCode)}
-    ${reminderSectionHTML(isEdit ? task : null)}
+    ${reminderSectionHTML(task)}
+    <div class="field photos-field">
+      <label>📷 תמונות (אופציונלי)</label>
+      <div class="photo-grid" id="f-photos"></div>
+      <div class="photo-btns">
+        <button type="button" id="ph-cam">📷 צילום</button>
+        <button type="button" id="ph-pick">🖼 העלאה מהגלריה</button>
+      </div>
+      <input type="file" id="ph-file-cam" accept="image/*" capture="environment" hidden>
+      <input type="file" id="ph-file-pick" accept="image/*" multiple hidden>
+    </div>
+    ${extrasHTML(task, presetLocation)}
     <button class="btn-primary" id="save-task">${isEdit ? "שמירה" : "הוספת משימה"}</button>
     ${isEdit ? `<button class="btn-danger" id="delete-task">מחיקת משימה</button>` : ""}
   `;
 }
 
-function openTaskForm(taskId, presetLocation, presetGroupId) {
+let activeTaskForm = null;
+// restoredDraft: נתוני טיוטה שנשמרה אוטומטית (אחרי יציאה/קריסה) — הטופס נפתח איתם
+function openTaskForm(taskId, presetLocation, presetGroupId, restoredDraft) {
   const task = taskId ? Store.data.tasks.find((t) => t.id === taskId) : null;
-  openSheet(taskFormHTML(task, presetGroupId));
-  wireFloorSelect(task ? task.buildingId : (presetLocation && presetLocation.buildingId), task ? task.floorId : (presetLocation && presetLocation.floorId));
-  if (presetLocation && !task) {
+  const key = draftKey(taskId);
+  let view = task;
+  if (restoredDraft) {
+    const d = restoredDraft;
+    view = {
+      ...(task || { type: Store.data.taskTypes[0] || "", priority: "normal", buildingId: "", floorId: "", budgetCode: "", urgency: null, groupId: presetGroupId || "" }),
+      heading: d.heading, title: d.title, groupId: d.groupId || "", type: d.type, priority: d.priority,
+      buildingId: d.buildingId || "", floorId: d.floorId || "", budgetCode: d.budgetCode || "", urgency: d.urgency,
+      dueAt: d.dueAt, reminder: d.dueAt ? { enabled: true, repeatMinutes: d.repeatMinutes || null } : null,
+    };
+  }
+  openSheet(taskFormHTML(view, presetGroupId, !!task, presetLocation));
+  wireExtras();
+  wireReminderUI();
+  const initialPhotos = (task && task.photos) || [];
+  let photos = restoredDraft ? [...(restoredDraft.photos || [])] : [...initialPhotos];
+  const startB = view ? view.buildingId : (presetLocation && presetLocation.buildingId);
+  const startF = view ? view.floorId : (presetLocation && presetLocation.floorId);
+  wireFloorSelect(startB || (presetLocation && presetLocation.buildingId), startF);
+  if (presetLocation && !task && !restoredDraft) {
     $("#f-building").value = presetLocation.buildingId || "";
     wireFloorSelect(presetLocation.buildingId, presetLocation.floorId);
     setTimeout(() => { if ($("#f-floor")) $("#f-floor").value = presetLocation.floorId || ""; }, 0);
   }
-  let selType = task ? task.type : Store.data.taskTypes[0];
-  let selPriority = task ? task.priority : "normal";
+  let selType = view ? view.type : Store.data.taskTypes[0];
+  let selPriority = view ? view.priority : "normal";
+  const me = {};
+  activeTaskForm = me;
+  const alive = () => activeTaskForm === me && !!$("#save-task");
+
+  // ----- טיוטה אוטומטית -----
+  const snapshot = () => ({
+    heading: $("#f-heading").value.trim(),
+    title: getRichValue("f-title"),
+    groupId: $("#f-group").value && $("#f-group").value !== "__new" ? $("#f-group").value : null,
+    type: selType,
+    priority: selPriority,
+    buildingId: $("#f-building").value || null,
+    floorId: $("#f-floor").value || null,
+    budgetCode: $("#f-budget").value.trim(),
+    urgency: readUrgencyField("f-urgency"),
+    dueAt: $("#f-due").value ? new Date($("#f-due").value).getTime() : null,
+    repeatMinutes: $("#f-repeat").value ? parseInt($("#f-repeat").value) : null,
+    photos: [...photos],
+  });
+  let initialJSON = null;
+  setTimeout(() => {
+    if (!alive()) return;
+    // בשחזור טיוטה: משווים מול המשימה המקורית, כדי שהטיוטה תיחשב "שינוי שלא נשמר"
+    initialJSON = restoredDraft ? "__restored__" : JSON.stringify(snapshot());
+  }, 80);
+  const isDirty = () => initialJSON === null ? false : JSON.stringify(snapshot()) !== initialJSON;
+  const persistDraft = () => {
+    if (!alive() || initialJSON === null) return;
+    if (isDirty()) saveDraft(key, snapshot()); else clearDraft(key);
+  };
+  let draftTimer = null;
+  const scheduleDraft = () => { clearTimeout(draftTimer); draftTimer = setTimeout(persistDraft, 350); };
+  const sc = $("#sheet-content");
+  const ac = new AbortController();
+  ["input", "change", "click"].forEach((ev) => sc.addEventListener(ev, () => { if (alive()) scheduleDraft(); }, { signal: ac.signal }));
+  const flush = () => { clearTimeout(draftTimer); persistDraft(); };
+  const onHide = () => { if (document.hidden) flush(); };
+  document.addEventListener("visibilitychange", onHide);
+  window.addEventListener("pagehide", flush);
+  const detach = () => {
+    clearTimeout(draftTimer);
+    document.removeEventListener("visibilitychange", onHide);
+    window.removeEventListener("pagehide", flush);
+    ac.abort();
+    activeTaskForm = null;
+  };
+
+  // ----- סוג / עדיפות / תיקייה -----
   wireCategoryChipGroup($("#f-type-wrap"), "f-type-group", {
     getItems: () => Store.data.taskTypes,
     getUsage: (name) => Store.usageOfTaskType(name),
     addFn: (name) => Store.addTaskType(name),
     deleteFn: (name, mode) => Store.deleteTaskType(name, mode),
     getSelected: () => selType,
-    onSelect: (val) => { selType = val; },
+    onSelect: (val) => { selType = val; scheduleDraft(); },
   });
   $("#f-priority-group").addEventListener("click", (e) => {
     if (!e.target.classList.contains("select-chip")) return;
     $$("#f-priority-group .select-chip").forEach((c) => c.classList.remove("active"));
     e.target.classList.add("active");
     selPriority = e.target.dataset.val;
+    scheduleDraft();
   });
   const gSel = $("#f-group");
   let prevGroup = gSel.value;
@@ -1311,30 +1731,62 @@ function openTaskForm(taskId, presetLocation, presetGroupId) {
       gSel.value = prevGroup;
     }
   });
-  $("#save-task").addEventListener("click", async () => {
-    const title = getRichValue("f-title");
-    if (!title) { toast("צריך להזין תיאור למשימה"); return; }
-    const dueRaw = $("#f-due").value;
-    const dueAt = dueRaw ? new Date(dueRaw).getTime() : null;
-    const repeatMinutes = $("#f-repeat").value ? parseInt($("#f-repeat").value) : null;
-    let reminder = null;
-    if (dueAt) {
-      reminder = { enabled: true, repeatMinutes, lastFiredAt: null };
+
+  // ----- תמונות -----
+  const renderPhotoGrid = () => {
+    $("#f-photos").innerHTML = photos.map((id) => `<div class="ph-item"><img class="photo-thumb" data-pid="${id}" alt="תמונה"><button type="button" class="ph-del" data-del="${id}" aria-label="הסר תמונה">✕</button></div>`).join("");
+    hydratePhotos($("#f-photos"));
+  };
+  renderPhotoGrid();
+  $("#f-photos").addEventListener("click", (e) => {
+    const del = e.target.closest(".ph-del");
+    if (!del) return;
+    photos = photos.filter((x) => x !== del.dataset.del);
+    renderPhotoGrid();
+    scheduleDraft();
+  });
+  const addFiles = async (files) => {
+    for (const f of files) {
+      try {
+        const blob = await compressImage(f);
+        const id = newPhotoId();
+        await PhotoDB.put(id, blob);
+        photos.push(id);
+      } catch (err) { toast("לא הצלחתי לשמור את התמונה"); }
     }
+    if (!alive()) return;
+    renderPhotoGrid();
+    persistDraft();
+  };
+  $("#ph-cam").addEventListener("click", () => $("#ph-file-cam").click());
+  $("#ph-pick").addEventListener("click", () => $("#ph-file-pick").click());
+  ["ph-file-cam", "ph-file-pick"].forEach((id) => $("#" + id).addEventListener("change", (e) => {
+    const files = [...e.target.files]; e.target.value = "";
+    if (files.length) addFiles(files);
+  }));
+
+  // ----- שמירה -----
+  const newPhotosNotSaved = () => photos.filter((id) => !initialPhotos.includes(id));
+  const doSave = () => {
+    const s = snapshot();
+    if (!s.title) { toast("צריך להזין תיאור למשימה"); return false; }
+    const dueAt = s.dueAt;
+    const reminder = dueAt ? { enabled: true, repeatMinutes: s.repeatMinutes, lastFiredAt: null } : null;
     const payload = {
-      heading: $("#f-heading").value.trim(),
-      groupId: $("#f-group").value && $("#f-group").value !== "__new" ? $("#f-group").value : null,
+      heading: s.heading,
+      groupId: s.groupId,
       editedAt: task ? Date.now() : null,
-      title,
-      type: selType,
-      priority: selPriority,
-      buildingId: $("#f-building").value || null,
-      floorId: $("#f-floor").value || null,
-      budgetCode: $("#f-budget").value.trim(),
-      urgency: readUrgencyField("f-urgency"),
+      title: s.title,
+      type: s.type,
+      priority: s.priority,
+      buildingId: s.buildingId,
+      floorId: s.floorId,
+      budgetCode: s.budgetCode,
+      urgency: s.urgency,
       dueAt,
       reminder,
       hold: dueAt ? (task ? task.hold : false) : false,
+      photos: s.photos,
     };
     let savedId;
     if (task) {
@@ -1346,21 +1798,63 @@ function openTaskForm(taskId, presetLocation, presetGroupId) {
       savedId = created.id;
       toast("המשימה נוספה");
     }
+    deletePhotoIds(initialPhotos.filter((id) => !s.photos.includes(id)));
+    clearDraft(key);
+    detach();
     syncCloudReminder(savedId);
-    if (dueAt) toast("⏰ תזכורת בעוד " + formatTimeLeft(dueAt - Date.now()), 4500);
-    closeSheet();
+    closeSheetNow();
     renderTasks();
     updateUrgentBanner();
+    if (dueAt) showReminderPopup(dueAt);
     // הרשאת התראות/רישום Push אחרי השמירה — כדי שהמשימה והתזכורת בענן לא ייתקעו עליהם
     if (dueAt) ensureNotificationPermission().catch(() => {});
-  });
+    return true;
+  };
+  $("#save-task").addEventListener("click", doSave);
+
+  // ----- יציאה מהטופס בלי לשמור: שואלים -----
+  let asking = false;
+  const repushBack = async () => {
+    // אם הסגירה הגיעה מכפתור "חזרה" של הטלפון, צריך להחזיר את שכבת החזרה של הטופס
+    await new Promise((r) => setTimeout(r, 200));
+    if (sheetGuard === guard && !backStack.includes(closeSheet)) pushBackable(closeSheet);
+  };
+  const guard = async () => {
+    if (asking) return;
+    asking = true;
+    try {
+      if (!isDirty()) {
+        deletePhotoIds(newPhotosNotSaved());
+        clearDraft(key); detach(); closeSheetNow(); return;
+      }
+      flush();
+      const choice = await chooseDialog("לשמור את המשימה?", "יש שינויים שעדיין לא נשמרו.", [
+        { label: "המשך עריכה", value: "stay", style: "ghost" },
+        { label: "לא לשמור", value: "discard", style: "danger" },
+        { label: "שמירה", value: "save", style: "primary" },
+      ]);
+      if (choice === "discard") {
+        deletePhotoIds(newPhotosNotSaved());
+        clearDraft(key); detach(); closeSheetNow();
+      } else if (choice === "save") {
+        if (!doSave()) await repushBack();
+      } else {
+        await repushBack();
+      }
+    } finally { asking = false; }
+  };
+  sheetGuard = guard;
+
   if (task) {
     $("#delete-task").addEventListener("click", async () => {
       const ok = await confirmDialog("מחיקת משימה", "למחוק את המשימה?", "מחיקה");
       if (ok) {
         Store.deleteTask(task.id);
+        deletePhotoIds([...(task.photos || []), ...photos]);
         window.CloudSync && window.CloudSync.removeReminder(task.id);
-        closeSheet();
+        clearDraft(key);
+        detach();
+        closeSheetNow();
         renderTasks();
         toast("המשימה נמחקה");
       }
@@ -1373,10 +1867,10 @@ function formatTimeLeft(ms) {
   const mins = Math.max(1, Math.round(ms / 60000));
   const d = Math.floor(mins / 1440), h = Math.floor((mins % 1440) / 60), m = mins % 60;
   const parts = [];
-  if (d) parts.push(d === 1 ? "יום" : d + " ימים");
+  if (d) parts.push(d === 1 ? "יום" : d === 2 ? "יומיים" : d + " ימים");
   if (h) parts.push(h === 1 ? "שעה" : h + " שעות");
   if (m) parts.push(m === 1 ? "דקה" : m + " דקות");
-  return parts.length > 1 ? parts.slice(0, -1).join(", ") + " ו" + parts[parts.length - 1] : parts[0];
+  return parts.join(" ו-");
 }
 
 async function ensureNotificationPermission() {
@@ -1511,7 +2005,11 @@ function wireCardActions(container, kind) {
     if (e.target.dataset.action === "delete") {
       if (kind === "task") {
         const ok = await confirmDialog("מחיקת משימה", "למחוק את המשימה?", "מחיקה");
-        if (ok) { Store.deleteTask(id); window.CloudSync && window.CloudSync.removeReminder(id); renderTasks(); toast("נמחק"); }
+        if (ok) {
+          const tt = Store.data.tasks.find((x) => x.id === id);
+          Store.deleteTask(id); deletePhotoIds(tt && tt.photos);
+          window.CloudSync && window.CloudSync.removeReminder(id); renderTasks(); toast("נמחק");
+        }
       }
       return;
     }
@@ -1615,14 +2113,16 @@ function renderOrders() {
     const steps = orderSteps();
     const stepIdx = steps.findIndex((s) => s.key === o.status);
     return `
-    <div class="card ${urgencyColorClass(o)}" data-id="${o.id}" data-reorder-item>
+    <div class="card ${urgencyColorClass(o)} ${isCollapsed(o.id) ? "collapsed" : ""}" data-id="${o.id}" data-reorder-item>
       ${o.heading ? `<div class="card-heading">${esc(o.heading)}</div>` : ""}
       <div class="card-top">
         <span class="drag-handle">⠿</span>
         <div class="card-title rich-content">${orderHasItems(o) ? orderItemsHTML(o) : `${renderRichText(o.title)} ${o.qty > 1 ? `<span class="mono" style="color:var(--text-dim);font-size:13px">×${o.qty}</span>` : ""}`}</div>
+        ${collapseBtnHTML()}
       </div>
       <div class="card-meta">
         <span class="tag type">${esc(o.category)}</span>
+        <span class="tag stat-tag">${esc(orderStepLabel(o.status) || "")}</span>
         ${orderHasItems(o) ? `<span class="tag chk-progress">☑ ${o.items.filter((i) => i.done).length}/${o.items.length}</span>` : ""}
         ${loc ? `<span class="tag loc">📍 ${esc(loc)}</span>` : ""}
         ${urgencyBadgeHTML(o)}
@@ -1687,7 +2187,7 @@ enableLongPressReorder($("#orders-list"), "[data-reorder-item]", (ids) => {
   renderOrders();
 });
 
-function orderFormHTML(order) {
+function orderFormHTML(order, presetLocation) {
   const isEdit = !!order;
   order = order || { title: "", category: Store.data.orderCategories[0] || "", qty: 1, buildingId: "", floorId: "", budgetCode: "", notes: "", urgency: null };
   const legacy = isEdit && !orderHasItems(order); // הזמנה ישנה: פריט בודד עם כותרת + כמות
@@ -1711,7 +2211,7 @@ function orderFormHTML(order) {
       </div>
     </div>` : `
     <div class="items-box">
-      <div class="items-box-title">📦 פריטים בהזמנה — לכל פריט כמות משלו</div>
+      <div class="items-box-title">📦 פריטים בהזמנה — שם הפריט + כמות לכל פריט</div>
       <div id="f-items"></div>
       <button type="button" class="btn-secondary" id="f-add-item">+ הוספת פריט</button>
     </div>`}
@@ -1719,20 +2219,20 @@ function orderFormHTML(order) {
       <label>קטגוריה</label>
       <div id="f-category-wrap"></div>
     </div>
-    ${buildingSelectHTML(order.buildingId, order.floorId)}
     <div class="field">
       <label>📝 הערה (אופציונלי)</label>
       ${richEditorHTML("f-notes", "פרטים נוספים...", order.notes)}
     </div>
     ${urgencyFieldHTML("f-urgency", order.urgency)}
-    ${budgetFieldHTML(order.budgetCode)}
+    ${extrasHTML(order, presetLocation)}
     <button class="btn-primary" id="save-order">${isEdit ? "שמירה" : "הוספה לרשימה"}</button>
     ${isEdit ? `<button class="btn-danger" id="delete-order">מחיקה</button>` : ""}
   `;
 }
 function openOrderForm(orderId, presetLocation) {
   const order = orderId ? Store.data.orders.find((o) => o.id === orderId) : null;
-  openSheet(orderFormHTML(order));
+  openSheet(orderFormHTML(order, presetLocation));
+  wireExtras();
   wireFloorSelect(order ? order.buildingId : (presetLocation && presetLocation.buildingId), order ? order.floorId : (presetLocation && presetLocation.floorId));
   if (presetLocation && !order) {
     $("#f-building").value = presetLocation.buildingId || "";
@@ -2177,11 +2677,12 @@ function renderQuestions() {
     return;
   }
   list.innerHTML = items.map((q) => `
-    <div class="card ${q.status === "answered" ? "done" : ""}" data-id="${q.id}" data-reorder-item>
+    <div class="card ${q.status === "answered" ? "done" : ""} ${isCollapsed(q.id) ? "collapsed" : ""}" data-id="${q.id}" data-reorder-item>
       <div class="card-top">
         <span class="drag-handle">⠿</span>
         <div class="status-dot ${q.status === "answered" ? "done" : "open"}" data-action="toggle-status"></div>
         <div class="card-title rich-content">${renderRichText(q.text)}</div>
+        ${collapseBtnHTML()}
       </div>
       ${q.relatedTo ? `<div class="card-meta"><span class="tag">👤 ${esc(q.relatedTo)}</span></div>` : ""}
       ${q.answer ? `<div class="card-notes"><div class="note-line"><span class="rich-content">💬 ${renderRichText(q.answer)}</span></div></div>` : ""}
@@ -3150,6 +3651,13 @@ $("#update-btn").addEventListener("click", () => {
 
 // ---------------- init ----------------
 renderAll();
+updateCollapseAllLabels();
+["tasks-list", "orders-list", "questions-list"].forEach((id) => {
+  const el = document.getElementById(id);
+  if (el) new MutationObserver(updateCollapseAllLabels).observe(el, { childList: true });
+});
+// אם האפליקציה נסגרה/קרסה באמצע כתיבת משימה — מציעים לחזור אליה או למחוק
+setTimeout(() => { checkTaskDrafts().catch(() => {}); }, 500);
 checkReminders();
 setInterval(checkReminders, 20000);
 // Every time the app comes back to the foreground, re-verify (and if needed re-save) the
